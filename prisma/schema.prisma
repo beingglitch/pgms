@@ -1,0 +1,218 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum TenantStatus {
+  ACTIVE
+  VACATED
+}
+
+enum DepositMethod {
+  CASH
+  CHEQUE
+}
+
+enum LedgerType {
+  RENT
+  DEPOSIT
+  REFUND
+  OTHER
+}
+
+enum PaymentMode {
+  UPI
+  CASH
+  BANK_TRANSFER
+  CHEQUE
+}
+
+enum ReminderType {
+  RENT
+  ELECTRICITY
+  OTHER
+}
+
+enum ReminderStatus {
+  PENDING
+  DONE
+}
+
+enum ExpenseFrequency {
+  ONE_TIME
+  MONTHLY
+  YEARLY
+}
+
+model PgInfo {
+  id          String @id @default("singleton")
+  name        String @default("My PG")
+  address     String @default("")
+  contact     String @default("")
+  totalBeds   Int    @default(0)
+  paymentLink String @default("")
+  ownerName   String @default("Owner")
+}
+
+model Tenant {
+  id         String @id @default(cuid())
+  name       String
+  phone      String
+  email      String?
+  fatherName String?
+  motherName String?
+
+  roomNumber String?
+  bedNumber  String?
+  rentAmount    Decimal @db.Decimal(10, 2)
+  depositAmount Decimal @db.Decimal(10, 2)
+  depositMethod       DepositMethod @default(CASH)
+  depositChequeNumber String?
+  depositChequeBank   String?
+
+  joinDate      DateTime
+  pan           String?
+  idProofType   String  @default("Aadhaar")
+  idProofNumber String?
+  aadhaarFrontUrl String?
+  aadhaarBackUrl  String?
+  photoUrl        String?
+
+  carNumber String?
+  carModel  String?
+  address   String?
+
+  emergencyContact String?
+  emergencyPhone   String?
+  notes            String?
+
+  status       TenantStatus   @default(ACTIVE)
+  vacatedDate  DateTime?
+  refundAmount Decimal?       @db.Decimal(10, 2)
+  refundMethod DepositMethod?
+  refundChequeNumber String?
+
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  agreements         Agreement[]
+  ledgerEntries      LedgerEntry[]
+  electricityBills   ElectricityBill[]
+  reminders          Reminder[]
+  checkoutDeductions CheckoutDeduction[]
+
+  @@index([status])
+}
+
+model Agreement {
+  id                String   @id @default(cuid())
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId          String
+  version           Int
+  effectiveDate     DateTime
+  roomNumber        String?
+  rentAmount        Decimal  @db.Decimal(10, 2)
+  depositAmount     Decimal  @db.Decimal(10, 2)
+  depositRefundable Boolean  @default(true)
+  electricityRate   Decimal  @db.Decimal(10, 2) @default(8)
+  laundryChargeable Boolean  @default(true)
+  laundryCharge     Decimal  @db.Decimal(10, 2) @default(300)
+  facilities        Json     @default("[]")
+  photoUrl          String?
+  note              String?
+  changeNote        String?
+  changedBy         String?
+  createdAt         DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+model LedgerEntry {
+  id         String      @id @default(cuid())
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId   String
+  type       LedgerType
+  amount     Decimal     @db.Decimal(10, 2)
+  date       DateTime
+  mode       PaymentMode @default(UPI)
+  note       String?
+  recordedBy String?
+  createdAt  DateTime    @default(now())
+
+  @@index([tenantId])
+  @@index([date])
+}
+
+model ElectricityBill {
+  id           String   @id @default(cuid())
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId     String
+  month        String
+  units        Decimal? @db.Decimal(10, 2)
+  amount       Decimal  @db.Decimal(10, 2)
+  billPhotoUrl String?
+  date         DateTime
+  recordedBy   String?
+  createdAt    DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+model CheckoutDeduction {
+  id        String   @id @default(cuid())
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId  String
+  reason    String
+  amount    Decimal  @db.Decimal(10, 2)
+  category  String?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+model Expense {
+  id         String           @id @default(cuid())
+  title      String
+  category   String
+  amount     Decimal          @db.Decimal(10, 2)
+  frequency  ExpenseFrequency @default(ONE_TIME)
+  date       DateTime
+  note       String?
+  receiptUrl String?
+  recordedBy String?
+  active     Boolean          @default(true)
+  createdAt  DateTime         @default(now())
+
+  @@index([frequency])
+  @@index([date])
+}
+
+model Reminder {
+  id        String         @id @default(cuid())
+  tenant    Tenant?        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId  String?
+  type      ReminderType   @default(RENT)
+  title     String
+  dueDate   DateTime
+  amount    Decimal?       @db.Decimal(10, 2)
+  note      String?
+  status    ReminderStatus @default(PENDING)
+  createdBy String?
+  createdAt DateTime       @default(now())
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+model ActivityLog {
+  id     String   @id @default(cuid())
+  actor  String
+  action String
+  detail String?
+  ts     DateTime @default(now())
+}
