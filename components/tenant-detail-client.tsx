@@ -318,6 +318,7 @@ export function TenantDetailClient({
         defaultAmount={Number(tenant.rentAmount)}
       />
       <MeterReadingDialog
+        key={electricityOpen ? "open" : "closed"}
         open={electricityOpen}
         onOpenChange={setElectricityOpen}
         tenantId={tenant.id}

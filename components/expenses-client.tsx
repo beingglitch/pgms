@@ -169,6 +169,7 @@ export function ExpensesClient({
 
       <ExpenseFormDialog open={formOpen} onOpenChange={setFormOpen} />
       <MeterReadingDialog
+        key={meterOpen ? "open" : "closed"}
         open={meterOpen}
         onOpenChange={setMeterOpen}
         isMainMeter
