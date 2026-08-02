@@ -30,6 +30,7 @@ export function ReminderFormDialog({
   const { manager } = useManager();
   const [tenantId, setTenantId] = useState(fixedTenantId || tenants[0]?.id || "");
   const [type, setType] = useState<"RENT" | "ELECTRICITY" | "OTHER">("RENT");
+  const tenantItems = Object.fromEntries(tenants.map((t) => [t.id, `${t.name} — Room ${t.roomNumber || "-"}`]));
   const [title, setTitle] = useState("Rent due");
   const [dueDate, setDueDate] = useState(todayISO());
   const [amount, setAmount] = useState(defaultAmount ? String(defaultAmount) : "");
@@ -48,7 +49,7 @@ export function ReminderFormDialog({
         amount: amount ? Number(amount) : undefined,
         note: note || undefined,
       });
-      toast.success("ReminderModel saved");
+      toast.success("Reminder saved");
       onOpenChange(false);
       router.refresh();
     } finally {
@@ -66,7 +67,7 @@ export function ReminderFormDialog({
           {!fixedTenantId && (
             <div>
               <Label className="mb-1">Tenant</Label>
-              <Select value={tenantId} onValueChange={(v) => v && setTenantId(v)}>
+              <Select items={tenantItems} value={tenantId} onValueChange={(v) => v && setTenantId(v)}>
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {tenants.map((t) => (
@@ -79,8 +80,12 @@ export function ReminderFormDialog({
             </div>
           )}
           <div>
-            <Label className="mb-1">ReminderModel type</Label>
-            <Select value={type} onValueChange={(v) => setType(v as typeof type)}>
+            <Label className="mb-1">Reminder type</Label>
+            <Select
+              items={{ RENT: "Rent not paid", ELECTRICITY: "Electricity bill", OTHER: "Other" }}
+              value={type}
+              onValueChange={(v) => v && setType(v as typeof type)}
+            >
               <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="RENT">Rent not paid</SelectItem>

@@ -80,7 +80,11 @@ export function ExpenseFormDialog({ open, onOpenChange }: { open: boolean; onOpe
           </div>
           <div>
             <Label className="mb-1">Frequency</Label>
-            <Select value={frequency} onValueChange={(v) => setFrequency(v as typeof frequency)}>
+            <Select
+              items={{ ONE_TIME: "One-time", MONTHLY: "Monthly recurring", YEARLY: "Yearly recurring" }}
+              value={frequency}
+              onValueChange={(v) => v && setFrequency(v as typeof frequency)}
+            >
               <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="ONE_TIME">One-time</SelectItem>

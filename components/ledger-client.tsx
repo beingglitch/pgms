@@ -19,7 +19,7 @@ export function LedgerClient({
   tenants,
 }: {
   entries: Entry[];
-  tenants: Pick<TenantModel, "id" | "name" | "roomNumber">[];
+  tenants: Pick<TenantModel, "id" | "name" | "roomNumber" | "rentAmount">[];
 }) {
   const router = useRouter();
   const { manager } = useManager();

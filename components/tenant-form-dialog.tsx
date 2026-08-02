@@ -172,7 +172,11 @@ export function TenantFormDialog({
               <Input type="number" value={f.depositAmount} onChange={(e) => set("depositAmount", Number(e.target.value))} />
             </Field>
             <Field label="Taken as">
-              <Select value={f.depositMethod} onValueChange={(v) => set("depositMethod", v as "CASH" | "CHEQUE")}>
+              <Select
+                items={{ CASH: "Cash", CHEQUE: "Blank cheque" }}
+                value={f.depositMethod}
+                onValueChange={(v) => v && set("depositMethod", v as "CASH" | "CHEQUE")}
+              >
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="CASH">Cash</SelectItem>

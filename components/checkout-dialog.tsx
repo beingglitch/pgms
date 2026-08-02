@@ -145,7 +145,11 @@ export function CheckoutDialog({
 
           <div>
             <Label className="mb-1">Settle {refund >= 0 ? "refund" : "amount owed"} by</Label>
-            <Select value={refundMethod} onValueChange={(v) => setRefundMethod(v as "CASH" | "CHEQUE")}>
+            <Select
+              items={{ CASH: "Cash", CHEQUE: "Cheque" }}
+              value={refundMethod}
+              onValueChange={(v) => v && setRefundMethod(v as "CASH" | "CHEQUE")}
+            >
               <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="CASH">Cash</SelectItem>
