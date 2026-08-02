@@ -16,6 +16,7 @@ export function SettingsClient({ pgInfo, activity }: { pgInfo: PgInfoModel; acti
   const router = useRouter();
   const { manager, setManager } = useManager();
   const [pg, setPg] = useState(pgInfo);
+  const [rate, setRate] = useState(Number(pgInfo.electricityRatePerUnit));
   const [ownerDraft, setOwnerDraft] = useState(manager);
   const [showLog, setShowLog] = useState(false);
 
@@ -26,6 +27,7 @@ export function SettingsClient({ pgInfo, activity }: { pgInfo: PgInfoModel; acti
       contact: pg.contact,
       totalBeds: pg.totalBeds,
       paymentLink: pg.paymentLink,
+      electricityRatePerUnit: rate,
     });
     toast.success("Saved");
     router.refresh();
@@ -73,6 +75,13 @@ export function SettingsClient({ pgInfo, activity }: { pgInfo: PgInfoModel; acti
           <div>
             <Label className="mb-1">Default payment link</Label>
             <Input value={pg.paymentLink} onChange={(e) => setPg({ ...pg, paymentLink: e.target.value })} placeholder="https://…" />
+          </div>
+          <div>
+            <Label className="mb-1">Electricity rate (₹ per unit)</Label>
+            <Input type="number" value={rate} onChange={(e) => setRate(Number(e.target.value))} />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Used to auto-calculate room and main meter electricity bills.
+            </p>
           </div>
           <Button onClick={saveDetails}>Save details</Button>
         </CardContent>

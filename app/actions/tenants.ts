@@ -55,7 +55,7 @@ export async function getTenant(id: string) {
     include: {
       agreements: { orderBy: { version: "desc" } },
       ledgerEntries: { orderBy: { date: "desc" } },
-      electricityBills: { orderBy: { date: "desc" } },
+      electricityBills: { orderBy: { endDate: "desc" } },
       reminders: { where: { status: "PENDING" }, orderBy: { dueDate: "asc" } },
       checkoutDeductions: true,
     },

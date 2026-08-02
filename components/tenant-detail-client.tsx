@@ -29,7 +29,7 @@ import { CheckoutDialog } from "@/components/checkout-dialog";
 import { LedgerFormDialog } from "@/components/ledger-form-dialog";
 import { ReminderFormDialog } from "@/components/reminder-form-dialog";
 import { AgreementFormDialog } from "@/components/agreement-form-dialog";
-import { ElectricityBillDialog } from "@/components/electricity-bill-dialog";
+import { MeterReadingDialog } from "@/components/meter-reading-dialog";
 import { SendMessageDialog } from "@/components/send-message-dialog";
 import { toast } from "sonner";
 
@@ -39,10 +39,12 @@ export function TenantDetailClient({
   tenant,
   paymentLink,
   pgName,
+  electricityRate,
 }: {
   tenant: TenantDetail;
   paymentLink: string;
   pgName: string;
+  electricityRate: number;
 }) {
   const router = useRouter();
   const { manager } = useManager();
@@ -181,7 +183,7 @@ export function TenantDetailClient({
               <IndianRupee className="h-3.5 w-3.5" /> Record payment
             </Button>
             <Button size="sm" variant="secondary" onClick={() => setElectricityOpen(true)}>
-              <Zap className="h-3.5 w-3.5" /> Electricity bill
+              <Zap className="h-3.5 w-3.5" /> Meter reading
             </Button>
             <Button size="sm" variant="secondary" onClick={() => setRemOpen(true)}>
               <BellRing className="h-3.5 w-3.5" /> Add reminder
@@ -257,16 +259,18 @@ export function TenantDetailClient({
 
           {tenant.electricityBills.length > 0 && (
             <div className="mb-4">
-              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-amber-700">Electricity bills</p>
+              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-amber-700">Electricity readings</p>
               <div className="space-y-2">
                 {tenant.electricityBills.map((b) => (
                   <div key={b.id} className="flex items-center justify-between rounded-lg border p-2 text-sm">
                     <div className="flex items-center gap-2">
-                      {b.billPhotoUrl && (
+                      {b.photoUrl && (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={b.billPhotoUrl} alt="" className="h-8 w-8 rounded object-cover" />
+                        <img src={b.photoUrl} alt="" className="h-8 w-8 rounded object-cover" />
                       )}
-                      <span>{b.month} {b.units ? `· ${b.units} units` : ""}</span>
+                      <span>
+                        {fmtDate(b.startDate)} → {fmtDate(b.endDate)} · {Number(b.units)} units
+                      </span>
                     </div>
                     <span className="font-semibold">{inr(b.amount)}</span>
                   </div>
@@ -313,7 +317,20 @@ export function TenantDetailClient({
         fixedTenantId={tenant.id}
         defaultAmount={Number(tenant.rentAmount)}
       />
-      <ElectricityBillDialog open={electricityOpen} onOpenChange={setElectricityOpen} tenantId={tenant.id} />
+      <MeterReadingDialog
+        open={electricityOpen}
+        onOpenChange={setElectricityOpen}
+        tenantId={tenant.id}
+        defaultRate={electricityRate}
+        lastReading={
+          tenant.electricityBills[0]
+            ? {
+                endReading: Number(tenant.electricityBills[0].endReading),
+                endDate: tenant.electricityBills[0].endDate.toISOString(),
+              }
+            : null
+        }
+      />
       {currentAgreement && (
         <AgreementFormDialog open={agreementOpen} onOpenChange={setAgreementOpen} tenantId={tenant.id} current={currentAgreement} />
       )}

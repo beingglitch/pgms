@@ -49,13 +49,14 @@ enum ExpenseFrequency {
 }
 
 model PgInfo {
-  id          String @id @default("singleton")
-  name        String @default("My PG")
-  address     String @default("")
-  contact     String @default("")
-  totalBeds   Int    @default(0)
-  paymentLink String @default("")
-  ownerName   String @default("Owner")
+  id                     String  @id @default("singleton")
+  name                   String  @default("My PG")
+  address                String  @default("")
+  contact                String  @default("")
+  totalBeds              Int     @default(0)
+  paymentLink            String  @default("")
+  ownerName              String  @default("Owner")
+  electricityRatePerUnit Decimal @db.Decimal(10, 2) @default(8)
 }
 
 model Tenant {
@@ -150,17 +151,23 @@ model LedgerEntry {
 
 model ElectricityBill {
   id           String   @id @default(cuid())
-  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  tenantId     String
-  month        String
-  units        Decimal? @db.Decimal(10, 2)
+  tenant       Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId     String?
+  isMainMeter  Boolean  @default(false)
+  startReading Decimal  @db.Decimal(10, 2)
+  endReading   Decimal  @db.Decimal(10, 2)
+  startDate    DateTime
+  endDate      DateTime
+  units        Decimal  @db.Decimal(10, 2)
+  ratePerUnit  Decimal  @db.Decimal(10, 2)
   amount       Decimal  @db.Decimal(10, 2)
-  billPhotoUrl String?
-  date         DateTime
+  photoUrl     String?
   recordedBy   String?
   createdAt    DateTime @default(now())
 
   @@index([tenantId])
+  @@index([isMainMeter])
+  @@index([endDate])
 }
 
 model CheckoutDeduction {

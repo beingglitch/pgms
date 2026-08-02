@@ -12,5 +12,12 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
     prisma.pgInfo.findUnique({ where: { id: "singleton" } }),
   ]);
   if (!tenant) notFound();
-  return <TenantDetailClient tenant={tenant} paymentLink={pgInfo?.paymentLink || ""} pgName={pgInfo?.name || "your PG"} />;
+  return (
+    <TenantDetailClient
+      tenant={tenant}
+      paymentLink={pgInfo?.paymentLink || ""}
+      pgName={pgInfo?.name || "your PG"}
+      electricityRate={Number(pgInfo?.electricityRatePerUnit ?? 8)}
+    />
+  );
 }

@@ -5,18 +5,36 @@ import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Wallet } from "lucide-react";
+import { Plus, Wallet, Zap } from "lucide-react";
 import { ExpenseFormDialog } from "@/components/expense-form-dialog";
+import { MeterReadingDialog } from "@/components/meter-reading-dialog";
+import { deleteElectricityBill } from "@/app/actions/electricity";
 import { toggleExpenseActive, deleteExpense } from "@/app/actions/expenses";
 import { useManager } from "@/lib/manager-context";
 import { inr, fmtDate, monthKey } from "@/lib/format";
 import { toast } from "sonner";
-import type { ExpenseModel } from "@/lib/generated/prisma/models";
+import type { ExpenseModel, ElectricityBillModel } from "@/lib/generated/prisma/models";
 
-export function ExpensesClient({ expenses }: { expenses: ExpenseModel[] }) {
+export function ExpensesClient({
+  expenses,
+  mainMeterReadings,
+  electricityRate,
+}: {
+  expenses: ExpenseModel[];
+  mainMeterReadings: ElectricityBillModel[];
+  electricityRate: number;
+}) {
   const router = useRouter();
   const { manager } = useManager();
   const [formOpen, setFormOpen] = useState(false);
+  const [meterOpen, setMeterOpen] = useState(false);
+  const lastMainReading = mainMeterReadings[0];
+
+  async function handleDeleteReading(id: string) {
+    await deleteElectricityBill(manager, id);
+    toast.success("Reading deleted");
+    router.refresh();
+  }
 
   const thisMonth = monthKey(new Date());
   const recurring = expenses.filter((e) => e.frequency !== "ONE_TIME" && e.active);
@@ -60,6 +78,37 @@ export function ExpensesClient({ expenses }: { expenses: ExpenseModel[] }) {
           </CardContent>
         </Card>
       </div>
+
+      <Card className="mb-4">
+        <CardContent className="p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="font-semibold">Main meter</p>
+            <Button size="sm" variant="secondary" onClick={() => setMeterOpen(true)}>
+              <Zap className="h-3.5 w-3.5" /> Log reading
+            </Button>
+          </div>
+          <p className="mb-3 text-xs text-muted-foreground">
+            The building&apos;s main connection — always higher than any single room, since it covers common areas
+            too. Not billed to tenants; each reading is auto-added below as an expense.
+          </p>
+          {mainMeterReadings.length === 0 && <p className="text-sm text-muted-foreground">No readings logged yet.</p>}
+          <div className="space-y-2">
+            {mainMeterReadings.map((b) => (
+              <div key={b.id} className="flex items-center justify-between rounded-lg border p-2 text-sm">
+                <span>
+                  {fmtDate(b.startDate)} → {fmtDate(b.endDate)} · {Number(b.units)} units
+                </span>
+                <div className="flex items-center gap-3">
+                  <span className="font-semibold">{inr(b.amount)}</span>
+                  <button onClick={() => handleDeleteReading(b.id)} className="text-xs text-destructive">
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
 
       {recurring.length > 0 && (
         <div className="mb-4">
@@ -119,6 +168,17 @@ export function ExpensesClient({ expenses }: { expenses: ExpenseModel[] }) {
       </div>
 
       <ExpenseFormDialog open={formOpen} onOpenChange={setFormOpen} />
+      <MeterReadingDialog
+        open={meterOpen}
+        onOpenChange={setMeterOpen}
+        isMainMeter
+        defaultRate={electricityRate}
+        lastReading={
+          lastMainReading
+            ? { endReading: Number(lastMainReading.endReading), endDate: lastMainReading.endDate.toISOString() }
+            : null
+        }
+      />
     </div>
   );
 }

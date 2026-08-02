@@ -12,7 +12,14 @@ export async function getPgInfo() {
 
 export async function updatePgInfo(
   actor: string,
-  data: { name: string; address: string; contact: string; totalBeds: number; paymentLink: string }
+  data: {
+    name: string;
+    address: string;
+    contact: string;
+    totalBeds: number;
+    paymentLink: string;
+    electricityRatePerUnit: number;
+  }
 ) {
   await prisma.pgInfo.upsert({
     where: { id: "singleton" },
