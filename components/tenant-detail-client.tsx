@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { inr, fmtDate } from "@/lib/format";
 import { deleteTenant, getTenant } from "@/app/actions/tenants";
+import { deleteElectricityBill } from "@/app/actions/electricity";
 import { useManager } from "@/lib/manager-context";
 import { TenantFormDialog } from "@/components/tenant-form-dialog";
 import { CheckoutDialog } from "@/components/checkout-dialog";
@@ -87,6 +88,12 @@ export function TenantDetailClient({
     await deleteTenant(manager, tenant.id);
     toast.success("Tenant deleted");
     router.push("/tenants");
+  }
+
+  async function handleDeleteReading(id: string) {
+    await deleteElectricityBill(manager, id, tenant.id);
+    toast.success("Reading deleted");
+    router.refresh();
   }
 
   return (
@@ -272,7 +279,12 @@ export function TenantDetailClient({
                         {fmtDate(b.startDate)} → {fmtDate(b.endDate)} · {Number(b.units)} units
                       </span>
                     </div>
-                    <span className="font-semibold">{inr(b.amount)}</span>
+                    <div className="flex items-center gap-3">
+                      <span className="font-semibold">{inr(b.amount)}</span>
+                      <button onClick={() => handleDeleteReading(b.id)} className="text-xs text-destructive">
+                        Delete
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
