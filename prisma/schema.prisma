@@ -51,6 +51,8 @@ enum ExpenseFrequency {
 model PgInfo {
   id                     String  @id @default("singleton")
   name                   String  @default("My PG")
+  shortName              String  @default("PG")
+  logoUrl                String?
   address                String  @default("")
   contact                String  @default("")
   totalBeds              Int     @default(0)

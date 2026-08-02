@@ -16,15 +16,18 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-  title: "PG Manager",
-  description: "Tenant, ledger, and expense management for your PG",
-  manifest: "/manifest.webmanifest",
-  appleWebApp: { capable: true, statusBarStyle: "default", title: "PG Manager" },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const pgInfo = await getPgInfo();
+  return {
+    title: pgInfo.name,
+    description: `Tenant, ledger, and expense management for ${pgInfo.name}`,
+    manifest: "/manifest.webmanifest",
+    appleWebApp: { capable: true, statusBarStyle: "default", title: pgInfo.name },
+  };
+}
 
 export const viewport: Viewport = {
-  themeColor: "#1F4741",
+  themeColor: "#18181b",
   width: "device-width",
   initialScale: 1,
 };
@@ -42,7 +45,7 @@ export default async function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-muted/30">
         <ManagerProvider initialOwnerName={pgInfo.ownerName}>
-          <Nav pgName={pgInfo.name} />
+          <Nav pgName={pgInfo.name} shortName={pgInfo.shortName} logoUrl={pgInfo.logoUrl} />
           <main className="mx-auto w-full max-w-3xl flex-1 px-4 pb-24 pt-4 sm:px-6 sm:pb-10">{children}</main>
         </ManagerProvider>
         <Toaster />

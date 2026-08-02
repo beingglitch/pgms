@@ -14,6 +14,8 @@ export async function updatePgInfo(
   actor: string,
   data: {
     name: string;
+    shortName: string;
+    logoUrl: string;
     address: string;
     contact: string;
     totalBeds: number;

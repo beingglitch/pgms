@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { ClipboardList } from "lucide-react";
 import { updatePgInfo } from "@/app/actions/settings";
+import { PhotoUpload } from "@/components/photo-upload";
 import { useManager } from "@/lib/manager-context";
 import { toast } from "sonner";
 import type { PgInfoModel, ActivityLogModel } from "@/lib/generated/prisma/models";
@@ -23,6 +24,8 @@ export function SettingsClient({ pgInfo, activity }: { pgInfo: PgInfoModel; acti
   async function saveDetails() {
     await updatePgInfo(manager, {
       name: pg.name,
+      shortName: pg.shortName,
+      logoUrl: pg.logoUrl || "",
       address: pg.address,
       contact: pg.contact,
       totalBeds: pg.totalBeds,
@@ -58,7 +61,27 @@ export function SettingsClient({ pgInfo, activity }: { pgInfo: PgInfoModel; acti
           <p className="mb-1 font-semibold">Property details</p>
           <div>
             <Label className="mb-1">PG name</Label>
-            <Input value={pg.name} onChange={(e) => setPg({ ...pg, name: e.target.value })} />
+            <Input value={pg.name} onChange={(e) => setPg({ ...pg, name: e.target.value })} placeholder="e.g. Sukoon Niwas PG" />
+          </div>
+          <div>
+            <Label className="mb-1">Short name / initials (for app icon)</Label>
+            <Input
+              value={pg.shortName}
+              onChange={(e) => setPg({ ...pg, shortName: e.target.value.slice(0, 4) })}
+              placeholder="e.g. SN"
+              maxLength={4}
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Shown as the badge on the home screen icon and browser tab if no logo is uploaded.
+            </p>
+          </div>
+          <div>
+            <Label className="mb-1">Logo (optional)</Label>
+            <PhotoUpload value={pg.logoUrl} onChange={(url) => setPg({ ...pg, logoUrl: url })} label="Upload logo" />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Used as the app icon everywhere, including when installed as a PWA. Falls back to the initials above if
+              not set.
+            </p>
           </div>
           <div>
             <Label className="mb-1">Address</Label>

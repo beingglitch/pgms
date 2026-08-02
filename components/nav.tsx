@@ -19,7 +19,7 @@ const navItems = [
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-export function Nav({ pgName }: { pgName: string }) {
+export function Nav({ pgName, shortName, logoUrl }: { pgName: string; shortName: string; logoUrl?: string | null }) {
   const pathname = usePathname();
   const { manager, setManager } = useManager();
   const [editOpen, setEditOpen] = useState(false);
@@ -33,7 +33,17 @@ export function Nav({ pgName }: { pgName: string }) {
   return (
     <>
       <div className="flex items-center justify-between bg-primary px-4 py-4 text-primary-foreground sm:px-6">
-        <p className="truncate text-lg font-semibold leading-tight">{pgName}</p>
+        <div className="flex min-w-0 items-center gap-2">
+          {logoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={logoUrl} alt="" className="h-8 w-8 shrink-0 rounded-md object-cover" />
+          ) : (
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white/10 text-xs font-bold">
+              {shortName || "PG"}
+            </span>
+          )}
+          <p className="truncate text-lg font-semibold leading-tight">{pgName}</p>
+        </div>
         <button
           onClick={() => {
             setDraft(manager);
