@@ -35,7 +35,11 @@ export function LedgerFormDialog({
   const { manager } = useManager();
   const [tenantId, setTenantId] = useState(fixedTenantId || tenants[0]?.id || "");
   const [type, setType] = useState<"RENT" | "DEPOSIT" | "OTHER">("RENT");
-  const [amount, setAmount] = useState(defaultAmount ? String(defaultAmount) : "");
+  const [amount, setAmount] = useState(() => {
+    if (defaultAmount) return String(defaultAmount);
+    const initialTenant = tenants.find((t) => t.id === (fixedTenantId || tenants[0]?.id));
+    return initialTenant ? String(Number(initialTenant.rentAmount)) : "";
+  });
   const [amountTouched, setAmountTouched] = useState(!!defaultAmount);
   const [date, setDate] = useState(todayISO());
   const [mode, setMode] = useState("UPI");
