@@ -8,9 +8,9 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, X } from "lucide-react";
-import { checkoutTenant, type CheckoutDeductionInput } from "@/app/actions/tenants";
+import { checkoutTenant, type CheckoutDeductionInput, type PaymentMethod } from "@/app/actions/tenants";
 import { useManager } from "@/lib/manager-context";
-import { inr, todayISO } from "@/lib/format";
+import { inr, todayISO, paymentMethodLabel } from "@/lib/format";
 import type { TenantModel } from "@/lib/generated/prisma/models";
 import { toast } from "sonner";
 
@@ -31,9 +31,7 @@ export function CheckoutDialog({
   const [deductions, setDeductions] = useState<CheckoutDeductionInput[]>([
     { reason: "Outstanding electricity", amount: 0, category: "Electricity" },
   ]);
-  const [refundMethod, setRefundMethod] = useState<"CASH" | "CHEQUE">(
-    tenant.depositMethod === "CHEQUE" ? "CHEQUE" : "CASH"
-  );
+  const [refundMethod, setRefundMethod] = useState<PaymentMethod>(tenant.depositMethod as PaymentMethod);
   const [refundChequeNumber, setRefundChequeNumber] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -85,7 +83,7 @@ export function CheckoutDialog({
 
           <div className="rounded-lg border bg-muted/40 p-3">
             <p className="text-xs text-muted-foreground">
-              Security deposit held ({tenant.depositMethod === "CHEQUE" ? "blank cheque" : "cash"})
+              Security deposit held ({paymentMethodLabel(tenant.depositMethod)})
             </p>
             <p className="font-semibold">{inr(tenant.depositAmount)}</p>
             {tenant.depositMethod === "CHEQUE" && tenant.depositChequeNumber && (
@@ -146,13 +144,15 @@ export function CheckoutDialog({
           <div>
             <Label className="mb-1">Settle {refund >= 0 ? "refund" : "amount owed"} by</Label>
             <Select
-              items={{ CASH: "Cash", CHEQUE: "Cheque" }}
+              items={{ UPI: "UPI", CASH: "Cash", BANK_TRANSFER: "Bank transfer", CHEQUE: "Cheque" }}
               value={refundMethod}
-              onValueChange={(v) => v && setRefundMethod(v as "CASH" | "CHEQUE")}
+              onValueChange={(v) => v && setRefundMethod(v as PaymentMethod)}
             >
               <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
               <SelectContent>
+                <SelectItem value="UPI">UPI</SelectItem>
                 <SelectItem value="CASH">Cash</SelectItem>
+                <SelectItem value="BANK_TRANSFER">Bank transfer</SelectItem>
                 <SelectItem value="CHEQUE">Cheque</SelectItem>
               </SelectContent>
             </Select>

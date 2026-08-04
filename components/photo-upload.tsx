@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { upload } from "@vercel/blob/client";
 import { Camera, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 export function PhotoUpload({
   value,
@@ -27,8 +28,8 @@ export function PhotoUpload({
         handleUploadUrl: "/api/upload",
       });
       onChange(blob.url);
-    } catch {
-      // upload failed silently; user can retry
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Photo upload failed");
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -45,7 +46,7 @@ export function PhotoUpload({
           <Camera className="h-4 w-4 text-muted-foreground" />
         </div>
       )}
-      <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handle} className="hidden" />
+      <input ref={fileRef} type="file" accept="image/*" onChange={handle} className="hidden" />
       <Button type="button" variant="outline" size="sm" onClick={() => fileRef.current?.click()} disabled={uploading}>
         {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
         {uploading ? "Uploading…" : value ? "Change" : label}

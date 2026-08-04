@@ -21,7 +21,7 @@ import {
   MapPin,
   Phone,
 } from "lucide-react";
-import { inr, fmtDate } from "@/lib/format";
+import { inr, fmtDate, paymentMethodLabel } from "@/lib/format";
 import { deleteTenant, getTenant } from "@/app/actions/tenants";
 import { deleteElectricityBill } from "@/app/actions/electricity";
 import { useManager } from "@/lib/manager-context";
@@ -125,7 +125,7 @@ export function TenantDetailClient({
               )}
               <p className={`mt-1 text-sm font-bold ${Number(tenant.refundAmount) < 0 ? "text-destructive" : ""}`}>
                 {Number(tenant.refundAmount) >= 0 ? "Refunded" : "Owed by tenant"}: {inr(Math.abs(Number(tenant.refundAmount)))} via{" "}
-                {tenant.refundMethod === "CHEQUE" ? "cheque" : "cash"}
+                {paymentMethodLabel(tenant.refundMethod)}
               </p>
             </div>
           )}
@@ -226,7 +226,7 @@ export function TenantDetailClient({
               <div className="mt-1 space-y-0.5 text-xs">
                 <p>
                   Deposit: {inr(tenant.depositAmount)} ({currentAgreement.depositRefundable ? "refundable" : "non-refundable"}) ·{" "}
-                  taken as {tenant.depositMethod === "CHEQUE" ? "blank cheque" : "cash"}
+                  taken as {tenant.depositMethod === "CHEQUE" ? "blank cheque" : paymentMethodLabel(tenant.depositMethod)}
                 </p>
                 <p>
                   Electricity: {inr(currentAgreement.electricityRate)}/unit · Laundry:{" "}

@@ -12,11 +12,6 @@ enum TenantStatus {
   VACATED
 }
 
-enum DepositMethod {
-  CASH
-  CHEQUE
-}
-
 enum LedgerType {
   RENT
   DEPOSIT
@@ -73,7 +68,7 @@ model Tenant {
   bedNumber  String?
   rentAmount    Decimal @db.Decimal(10, 2)
   depositAmount Decimal @db.Decimal(10, 2)
-  depositMethod       DepositMethod @default(CASH)
+  depositMethod       PaymentMode @default(CASH)
   depositChequeNumber String?
   depositChequeBank   String?
 
@@ -96,7 +91,7 @@ model Tenant {
   status       TenantStatus   @default(ACTIVE)
   vacatedDate  DateTime?
   refundAmount Decimal?       @db.Decimal(10, 2)
-  refundMethod DepositMethod?
+  refundMethod PaymentMode?
   refundChequeNumber String?
 
   createdBy String?

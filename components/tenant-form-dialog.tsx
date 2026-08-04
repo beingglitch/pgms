@@ -173,13 +173,15 @@ export function TenantFormDialog({
             </Field>
             <Field label="Taken as">
               <Select
-                items={{ CASH: "Cash", CHEQUE: "Blank cheque" }}
+                items={{ UPI: "UPI", CASH: "Cash", BANK_TRANSFER: "Bank transfer", CHEQUE: "Blank cheque" }}
                 value={f.depositMethod}
-                onValueChange={(v) => v && set("depositMethod", v as "CASH" | "CHEQUE")}
+                onValueChange={(v) => v && set("depositMethod", v as TenantInput["depositMethod"])}
               >
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="UPI">UPI</SelectItem>
                   <SelectItem value="CASH">Cash</SelectItem>
+                  <SelectItem value="BANK_TRANSFER">Bank transfer</SelectItem>
                   <SelectItem value="CHEQUE">Blank cheque</SelectItem>
                 </SelectContent>
               </Select>

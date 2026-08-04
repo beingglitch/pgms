@@ -34,6 +34,17 @@ export function nextDueDate(joinDate: Date | string, lastRentDate: Date | string
   return addMonths(base, 1);
 }
 
+const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  UPI: "UPI",
+  CASH: "cash",
+  BANK_TRANSFER: "bank transfer",
+  CHEQUE: "cheque",
+};
+
+export function paymentMethodLabel(mode: string | null | undefined) {
+  return PAYMENT_METHOD_LABELS[mode || ""] || "cash";
+}
+
 export function initials(name: string | null | undefined) {
   return (name || "?")
     .split(" ")

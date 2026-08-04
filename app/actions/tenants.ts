@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "./activity";
 
+export type PaymentMethod = "UPI" | "CASH" | "BANK_TRANSFER" | "CHEQUE";
+
 export type TenantInput = {
   name: string;
   phone: string;
@@ -14,7 +16,7 @@ export type TenantInput = {
   bedNumber?: string;
   rentAmount: number;
   depositAmount: number;
-  depositMethod: "CASH" | "CHEQUE";
+  depositMethod: PaymentMethod;
   depositChequeNumber?: string;
   depositChequeBank?: string;
   joinDate: string;
@@ -184,7 +186,7 @@ export async function checkoutTenant(
   input: {
     checkoutDate: string;
     deductions: CheckoutDeductionInput[];
-    refundMethod: "CASH" | "CHEQUE";
+    refundMethod: PaymentMethod;
     refundChequeNumber?: string;
   }
 ) {
@@ -222,7 +224,7 @@ export async function checkoutTenant(
         type: "REFUND",
         amount: refundAmount,
         date: checkoutDate,
-        mode: input.refundMethod === "CHEQUE" ? "CHEQUE" : "CASH",
+        mode: input.refundMethod,
         note:
           input.deductions.length > 0
             ? `Deposit ${tenant.depositAmount} minus deductions (${input.deductions
