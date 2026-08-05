@@ -3,9 +3,9 @@ export function inr(n: number | string | { toString(): string } | null | undefin
 }
 
 export function fmtDate(d: Date | string | null | undefined) {
-  if (!d) return "—";
+  if (!d) return "not set";
   const dt = new Date(d);
-  if (isNaN(dt.getTime())) return "—";
+  if (isNaN(dt.getTime())) return "not set";
   return dt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 }
 

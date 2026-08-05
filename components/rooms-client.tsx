@@ -44,7 +44,7 @@ function capacityWord(n: number) {
   return CAPACITY_WORDS[n] ?? `${n}-sharing`;
 }
 
-// Ground, First, Second… — the order names on an Indian building, in the
+// Ground, First, Second: the order names on an Indian building, in the
 // order floors are usually added. Renaming afterward is always available.
 const ORDINAL_FLOOR_NAMES = [
   "Ground",
@@ -341,7 +341,7 @@ function FloorDialog({
   onDone,
 }: {
   state: { open: boolean; floor?: Floor };
-  /** How many floors already exist — picks the next ordinal name for a new one. */
+  /** How many floors already exist, so the next ordinal name can be picked. */
   floorCount: number;
   onClose: () => void;
   manager: string;
@@ -352,7 +352,7 @@ function FloorDialog({
   const [order, setOrder] = useState(floor?.order ?? floorCount);
   const [busy, setBusy] = useState(false);
 
-  // Bulk room generation — only offered when creating a new floor. Editing an
+  // Bulk room generation is only offered when creating a new floor. Editing an
   // existing floor just edits the floor; rooms are added on the floor card.
   const [startNumber, setStartNumber] = useState("");
   const [singleCount, setSingleCount] = useState(0);
@@ -368,7 +368,7 @@ function FloorDialog({
     }
 
     setBusy(true);
-    // Floors no longer set a rent split of their own — only the property
+    // Floors no longer set a rent split of their own: only the property
     // default and each room's own override apply.
     const payload = { name, order, splitMode: floor?.splitMode ?? null };
     try {

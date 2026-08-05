@@ -84,7 +84,7 @@ export function SettingsClient({ pgInfo, activity }: { pgInfo: PgInfoModel; acti
         <div>
           <p className="font-display text-base font-semibold tracking-tight">Your name</p>
           <p className="text-xs text-muted-foreground">
-            Shown on every ledger entry, reminder, and edit you make — your accountability trail.
+            Shown on every ledger entry, reminder, and edit you make: your accountability trail.
           </p>
         </div>
         <div className="flex gap-2">
@@ -212,7 +212,7 @@ export function SettingsClient({ pgInfo, activity }: { pgInfo: PgInfoModel; acti
         <div>
           <p className="font-display text-base font-semibold tracking-tight">Export your data</p>
           <p className="text-xs text-muted-foreground">
-            Downloads every table as CSV — tenants, payments, charges, electricity, expenses, agreements, rooms,
+            Downloads every table as CSV: tenants, payments, charges, electricity, expenses, agreements, rooms,
             reminders, and the activity log. Keep a copy somewhere off this server.
           </p>
         </div>
@@ -234,7 +234,7 @@ export function SettingsClient({ pgInfo, activity }: { pgInfo: PgInfoModel; acti
             {activity.map((l) => (
               <div key={l.id} className="border-b border-border/70 pb-2 text-xs last:border-b-0">
                 <span className="font-semibold">{l.actor}</span> · {l.action}
-                {l.detail ? <span className="text-muted-foreground"> — {l.detail}</span> : null}
+                {l.detail ? <span className="text-muted-foreground">: {l.detail}</span> : null}
                 <div className="text-muted-foreground">{new Date(l.ts).toLocaleString("en-IN")}</div>
               </div>
             ))}

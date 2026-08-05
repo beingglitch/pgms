@@ -10,15 +10,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BellRing, CheckCircle2, MessageCircle, Plus, Send } from "lucide-react";
 import { ReminderFormDialog } from "@/components/reminder-form-dialog";
 import { SendMessageDialog } from "@/components/send-message-dialog";
+import { SendDuesReminderDialog } from "@/components/send-dues-reminder-dialog";
 import { Amount, EmptyState, KhataRow, PageTitle, Panel, SectionHeading, StatTile } from "@/components/khata";
-import { markReminder, deleteReminder, recordReminderSent, getReminderHistory } from "@/app/actions/reminders";
+import { markReminder, deleteReminder, getReminderHistory } from "@/app/actions/reminders";
 import { listOutstandingByTenant } from "@/app/actions/charges";
-import { buildDuesMessage, type Signature } from "@/lib/messages";
+import { type Signature } from "@/lib/messages";
 import { chargeOutstanding, CHARGE_TYPE_LABELS } from "@/lib/charges";
 import { useManager } from "@/lib/manager-context";
 import { inr, fmtDate, todayISO, dateISO, initials } from "@/lib/format";
 import type { ReminderModel, TenantModel } from "@/lib/generated/prisma/models";
-import { toast } from "sonner";
 
 type ReminderWithTenant = ReminderModel & {
   tenant: Pick<TenantModel, "name" | "photoUrl" | "phone" | "email"> | null;
@@ -89,7 +89,7 @@ export function RemindersClient({
             <>
               <p className="text-xs text-muted-foreground">
                 Each message is itemised and shows only what&apos;s still unpaid. Tap send and it opens in your own
-                WhatsApp or mail app — nothing goes out on its own.
+                WhatsApp or mail app, nothing goes out on its own.
               </p>
               {dues.map((row) => (
                 <ChaseCard
@@ -114,7 +114,7 @@ export function RemindersClient({
                 </Button>
               }
             >
-              Use these for anything that isn&apos;t a due — a promised repair, a document to collect.
+              Use these for anything that isn&apos;t a due, like a promised repair or a document to collect.
             </EmptyState>
           ) : (
             reminders.map((r) => {
@@ -129,7 +129,7 @@ export function RemindersClient({
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-semibold">
                         {r.title}
-                        {r.tenant?.name ? ` — ${r.tenant.name}` : ""}
+                        {r.tenant?.name ? `, ${r.tenant.name}` : ""}
                         <Badge variant="outline" className="ml-1.5 capitalize">
                           {r.type.toLowerCase()}
                         </Badge>
@@ -206,32 +206,21 @@ export function RemindersClient({
       <ReminderFormDialog open={formOpen} onOpenChange={setFormOpen} tenants={tenants} />
 
       {customFor && (
-        <SendMessageDialog
+        <SendDuesReminderDialog
           open={!!customFor}
-          onOpenChange={(o) => !o && setCustomFor(null)}
-          title={`Remind ${customFor.tenant.name}`}
-          subject={`Pending amount — ${signature.pgName}`}
-          message={buildDuesMessage(
-            {
-              name: customFor.tenant.name,
-              roomLabel: customFor.tenant.room ? `Room ${customFor.tenant.room.number}` : customFor.tenant.roomNumber,
-            },
-            customFor.tenant.charges,
-            signature
-          )}
+          onOpenChange={(o) => {
+            if (!o) {
+              setCustomFor(null);
+              router.refresh();
+            }
+          }}
+          tenantId={customFor.tenant.id}
+          tenantName={customFor.tenant.name}
+          roomLabel={customFor.tenant.room ? `Room ${customFor.tenant.room.number}` : customFor.tenant.roomNumber}
           phone={customFor.tenant.phone}
           email={customFor.tenant.email}
-          defaultLink={paymentLink}
-          onSent={async (channel) => {
-            await recordReminderSent(manager, {
-              tenantId: customFor.tenant.id,
-              tenantName: customFor.tenant.name,
-              channel,
-              amount: customFor.summary.total.outstanding,
-            });
-            toast.success("Reminder recorded as sent");
-            router.refresh();
-          }}
+          signature={signature}
+          paymentLink={paymentLink}
         />
       )}
 
@@ -243,7 +232,7 @@ export function RemindersClient({
           subject={shareTarget.title}
           message={`Hi ${shareTarget.tenant?.name ?? ""}, a quick reminder about ${shareTarget.title}${
             shareTarget.amount ? ` (${inr(shareTarget.amount)})` : ""
-          }, due ${fmtDate(shareTarget.dueDate)}.\n\n— ${signature.ownerName}, ${signature.pgName}`}
+          }, due ${fmtDate(shareTarget.dueDate)}.\n\n${signature.ownerName}, ${signature.pgName}`}
           phone={shareTarget.tenant?.phone}
           email={shareTarget.tenant?.email}
           defaultLink={paymentLink}

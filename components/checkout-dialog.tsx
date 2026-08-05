@@ -73,7 +73,7 @@ export function CheckoutDialog({
         refundMethod,
         refundChequeNumber: refundMethod === "CHEQUE" ? refundChequeNumber : undefined,
       });
-      toast.success(refund >= 0 ? "Checkout complete — refund recorded" : "Checkout complete — amount owed recorded");
+      toast.success(refund >= 0 ? "Checkout complete, refund recorded" : "Checkout complete, amount owed recorded");
       onOpenChange(false);
       router.refresh();
     } catch {
@@ -111,7 +111,7 @@ export function CheckoutDialog({
           {settlement && settlement.openCharges.length > 0 && (
             <div className="rounded-lg border border-ledger/30 bg-ledger/5 p-3">
               <p className="text-xs font-bold uppercase tracking-wide text-ledger">
-                Still unpaid — comes out of the deposit
+                Still unpaid, comes out of the deposit
               </p>
               <div className="mt-1">
                 {settlement.openCharges.map((c) => (
@@ -121,13 +121,13 @@ export function CheckoutDialog({
                 ))}
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
-                These are settled automatically at checkout — don&apos;t add them as deductions below as well.
+                These are settled automatically at checkout, so don&apos;t add them as deductions below as well.
               </p>
             </div>
           )}
 
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Deductions — damage, cleaning, and anything else not already billed
+            Deductions: damage, cleaning, and anything else not already billed
           </p>
           {deductions.map((r, i) => (
             <div key={i} className="space-y-2 rounded-lg border p-2 sm:border-0 sm:p-0">

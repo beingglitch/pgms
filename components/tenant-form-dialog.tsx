@@ -258,7 +258,7 @@ export function TenantFormDialog({
               <div className="border-t pt-3">
                 <p className="text-base font-semibold text-primary">Onboarding agreement</p>
                 <p className="text-xs text-muted-foreground">
-                  Editable later from the tenant profile — changes create a new dated, shareable version.
+                  Editable later from the tenant profile, and changes create a new dated, shareable version.
                 </p>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

@@ -13,8 +13,8 @@ export function round2(n: number) {
 /**
  * Divide an amount so the parts add back up to exactly the total.
  *
- * A room's electricity bill is a real sum of money that has to be shared out —
- * splitting ₹1,000 three ways as 333.33 each loses a paisa. The remainder is
+ * A room's electricity bill is a real sum of money that has to be shared out,
+ * and splitting ₹1,000 three ways as 333.33 each loses a paisa. The remainder is
  * handed to the earliest shares instead.
  */
 export function splitEvenly(total: number, parts: number): number[] {
@@ -71,7 +71,7 @@ export type TenantForRent = {
  * The rent this tenant actually owes each month.
  *
  * A per-tenant override always wins. Otherwise the room's rent is split. A
- * tenant with no room — or a room with no rent set — falls back to the amount
+ * tenant with no room, or a room with no rent set, falls back to the amount
  * on their own record, which is how every tenant worked before rooms existed.
  */
 export function effectiveRent(
@@ -123,7 +123,7 @@ export type ChargeSummary = {
 const EMPTY_ROW = (): ChargeSummaryRow => ({ billed: 0, paid: 0, outstanding: 0 });
 
 /**
- * Roll a tenant's charges up into per-type and overall totals — the shape the
+ * Roll a tenant's charges up into per-type and overall totals: the shape the
  * tenant card, the dues tab, and the reminder message all need.
  */
 export function summariseCharges(
@@ -165,7 +165,7 @@ export function summariseCharges(
 /**
  * Spread a payment across outstanding charges, oldest first.
  *
- * Returns the allocations to write plus whatever is left over — an overpayment
+ * Returns the allocations to write plus whatever is left over. An overpayment
  * sits on the tenant's account as credit rather than being silently absorbed.
  */
 export function planAllocations(

@@ -37,7 +37,7 @@ export async function listChargesForTenant(tenantId: string) {
   });
 }
 
-/** Everyone who owes something, with their charges — the Dues tab. */
+/** Everyone who owes something, with their charges: the Dues tab. */
 export async function listOutstandingByTenant() {
   const tenants = await prisma.tenant.findMany({
     where: { status: "ACTIVE" },
@@ -56,7 +56,7 @@ export async function listOutstandingByTenant() {
 /**
  * Raise this month's rent for everyone who doesn't already have it.
  *
- * Safe to run repeatedly — a tenant who already has a rent charge for the
+ * Safe to run repeatedly: a tenant who already has a rent charge for the
  * period is skipped, so a second click never double-bills anyone.
  */
 export async function generateRentCharges(actor: string, period?: string) {
@@ -216,7 +216,7 @@ export async function allocatePaymentToCharges(ledgerEntryId: string, tenantId: 
   return { applied: allocations.length, unallocated };
 }
 
-/** Rebuild every allocation for a tenant — used after a charge or payment is removed. */
+/** Rebuild every allocation for a tenant, used after a charge or payment is removed. */
 export async function reallocateTenant(tenantId: string) {
   const [payments, charges] = await Promise.all([
     prisma.ledgerEntry.findMany({
@@ -248,7 +248,7 @@ export async function reallocateTenant(tenantId: string) {
   return toWrite.length;
 }
 
-/** What a tenant owes right now, split by type — powers reminders and checkout. */
+/** What a tenant owes right now, split by type. Powers reminders and checkout. */
 export async function getTenantDues(tenantId: string) {
   const charges = await prisma.charge.findMany({
     where: { tenantId },

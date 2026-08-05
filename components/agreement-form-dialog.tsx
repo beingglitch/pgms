@@ -68,7 +68,7 @@ export function AgreementFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[92vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Revise agreement — v{current.version + 1}</DialogTitle>
+          <DialogTitle>Revise agreement, v{current.version + 1}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

@@ -17,7 +17,7 @@ const sans = Schibsted_Grotesk({
   display: "swap",
 });
 
-/// Serial data only — receipt numbers, meter readings, unit counts. Things you
+/// Serial data only: receipt numbers, meter readings, unit counts. Things you
 /// read digit by digit rather than as a word.
 const mono = IBM_Plex_Mono({
   variable: "--font-mono",

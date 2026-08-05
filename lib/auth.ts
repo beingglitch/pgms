@@ -6,8 +6,8 @@ export const SESSION_MAX_AGE = SESSION_DAYS * 24 * 60 * 60;
 
 /// Sessions are signed with AUTH_SECRET. If it isn't set we fall back to the
 /// database URL, which is always present and secret enough to keep the app
-/// working out of the box — but set AUTH_SECRET in production so that rotating
-/// database credentials doesn't sign everyone out.
+/// working out of the box. Set AUTH_SECRET in production, though, so that
+/// rotating database credentials doesn't sign everyone out.
 function secret() {
   const s = process.env.AUTH_SECRET || process.env.DATABASE_URL;
   if (!s) throw new Error("Set AUTH_SECRET (or DATABASE_URL) so sessions can be signed.");

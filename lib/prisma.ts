@@ -5,8 +5,8 @@ const globalForPrisma = globalThis as unknown as { prisma?: ReturnType<typeof cr
 
 /// Neon's pooler suspends the compute after inactivity; the connection that
 /// wakes it can time out even though the query itself was fine. These codes
-/// are all "the connection didn't work", never "the query was wrong" — safe
-/// to retry with backoff instead of surfacing a 500 on the page's first load.
+/// are all "the connection didn't work", never "the query was wrong", so it's
+/// safe to retry with backoff instead of surfacing a 500 on the first load.
 const RETRYABLE_CODES = new Set(["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED"]);
 const RETRYABLE_KINDS = ["DatabaseNotReachable", "ConnectionClosed", "SocketTimeout", "TooManyConnections"];
 

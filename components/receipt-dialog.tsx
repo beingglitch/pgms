@@ -16,7 +16,7 @@ type Entry = NonNullable<Awaited<ReturnType<typeof getLedgerEntry>>>;
 
 /**
  * A receipt for one payment: what was received, what it settled, and what is
- * still open — then the same thing as text the owner can send.
+ * still open, then the same thing as text the owner can send.
  */
 export function ReceiptDialog({
   open,
@@ -131,7 +131,7 @@ export function ReceiptDialog({
           </div>
 
           <p className="mt-3 text-xs text-muted-foreground">
-            — {signature.ownerName}, {signature.pgName}
+            {signature.ownerName}, {signature.pgName}
             {signature.contact ? ` · ${signature.contact}` : ""}
           </p>
         </div>
@@ -147,13 +147,13 @@ export function ReceiptDialog({
             <p className="text-xs text-muted-foreground">No phone number on file for WhatsApp.</p>
           )}
           {entry.tenant.email ? (
-            <a href={mailtoLink(entry.tenant.email, `Receipt ${entry.receiptNo ?? ""} — ${signature.pgName}`, fullMessage)}>
+            <a href={mailtoLink(entry.tenant.email, `Receipt ${entry.receiptNo ?? ""}: ${signature.pgName}`, fullMessage)}>
               <Button variant="outline" className="w-full">
                 <Mail className="h-4 w-4" /> Send by email
               </Button>
             </a>
           ) : (
-            <p className="text-xs text-muted-foreground">No email on file — add one on the tenant&apos;s profile.</p>
+            <p className="text-xs text-muted-foreground">No email on file. Add one on the tenant&apos;s profile.</p>
           )}
           <Button
             variant="ghost"

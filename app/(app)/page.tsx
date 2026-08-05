@@ -30,7 +30,7 @@ export default async function DashboardPage() {
     getDepositLiability(),
     listOutstandingByTenant(),
     prisma.charge.findMany({ include: { allocations: { select: { amount: true } } } }),
-    // Every payment, not a page of them — the old dashboard summed only the six
+    // Every payment, not a page of them. The old dashboard summed only the six
     // most recent entries and under-reported the month.
     prisma.ledgerEntry.findMany({
       where: { type: { in: ["RENT", "OTHER"] } },
@@ -113,7 +113,7 @@ export default async function DashboardPage() {
       <div className="grid grid-cols-2 gap-3">
         <StatTile
           label="Beds filled"
-          value={`${building.totals.occupied}/${building.totals.beds || "—"}`}
+          value={`${building.totals.occupied}/${building.totals.beds}`}
           hint={
             building.totals.beds > 0
               ? `${building.totals.beds - building.totals.occupied} vacant`
@@ -250,7 +250,7 @@ export default async function DashboardPage() {
         </SectionHeading>
         {activity.length === 0 ? (
           <EmptyState icon={Sparkles} title="Nothing yet">
-            Everything you do — payments, readings, edits — gets recorded here.
+            Everything you do (payments, readings, edits) gets recorded here.
           </EmptyState>
         ) : (
           activity.map((entry) => (
@@ -258,7 +258,7 @@ export default async function DashboardPage() {
               <div className="min-w-0">
                 <p className="truncate text-sm">
                   <span className="font-semibold">{entry.action}</span>
-                  {entry.detail ? <span className="text-muted-foreground"> — {entry.detail}</span> : null}
+                  {entry.detail ? <span className="text-muted-foreground">: {entry.detail}</span> : null}
                 </p>
                 <p className="text-[11px] text-muted-foreground">
                   {entry.actor} ·{" "}

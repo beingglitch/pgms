@@ -4,8 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { num, round2, summariseCharges } from "@/lib/charges";
 
 /**
- * Deposits are not income — they're money the owner is holding and will hand
- * back. Tracked separately from collections so the two never blur together.
+ * Deposits are not income. They're money the owner is holding and will hand
+ * back, tracked separately from collections so the two never blur together.
  */
 export async function getDepositLiability() {
   const [active, notice] = await Promise.all([

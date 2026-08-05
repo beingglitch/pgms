@@ -19,7 +19,7 @@ export async function isSignedIn() {
   return verifySessionToken(jar.get(SESSION_COOKIE)?.value);
 }
 
-/// Guard for anything that isn't already behind proxy.ts — API routes in
+/// Guard for anything that isn't already behind proxy.ts, API routes in
 /// particular, which are worth defending in depth.
 export async function requireAuth() {
   if (!(await isSignedIn())) throw new Error("Not signed in");

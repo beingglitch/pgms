@@ -61,7 +61,7 @@ const SENT_ACTION = "Dues reminder sent";
 /**
  * Record that the owner handed a reminder to WhatsApp or their mail client.
  *
- * That's the furthest this app can see — the message left for the tenant's
+ * That's the furthest this app can see: the message left for the tenant's
  * app, which is not the same as it being read. Wording everywhere says
  * "reminded", never "delivered".
  */

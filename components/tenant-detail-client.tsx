@@ -28,7 +28,7 @@ import {
 import { Amount, KhataRow, Panel, SectionHeading } from "@/components/khata";
 import { inr, fmtDate, paymentMethodLabel, todayISO } from "@/lib/format";
 import { CHARGE_TYPE_LABELS, chargeOutstanding, chargePaid, summariseCharges } from "@/lib/charges";
-import { buildDuesMessage, type Signature } from "@/lib/messages";
+import { type Signature } from "@/lib/messages";
 import { deleteTenant, getTenant, giveNotice, cancelNotice } from "@/app/actions/tenants";
 import { deleteElectricityBill } from "@/app/actions/electricity";
 import { useManager } from "@/lib/manager-context";
@@ -40,6 +40,7 @@ import { AgreementFormDialog } from "@/components/agreement-form-dialog";
 import { ChargeFormDialog } from "@/components/charge-form-dialog";
 import { MeterReadingDialog } from "@/components/meter-reading-dialog";
 import { SendMessageDialog } from "@/components/send-message-dialog";
+import { SendDuesReminderDialog } from "@/components/send-dues-reminder-dialog";
 import { toast } from "sonner";
 
 type TenantDetail = NonNullable<Awaited<ReturnType<typeof getTenant>>>;
@@ -68,15 +69,12 @@ export function TenantDetailClient({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [shareMsg, setShareMsg] = useState<{ title: string; subject: string; message: string } | null>(null);
+  const [duesReminderOpen, setDuesReminderOpen] = useState(false);
 
   const currentAgreement = tenant.agreements[0];
   const summary = summariseCharges(tenant.charges);
   const openCharges = tenant.charges.filter((c) => chargeOutstanding(c) > 0.005);
   const roomLabel = tenant.room ? `${tenant.room.floor.name} · Room ${tenant.room.number}` : tenant.roomNumber;
-
-  function duesMessage() {
-    return buildDuesMessage({ name: tenant.name, roomLabel }, tenant.charges, signature);
-  }
 
   function agreementMessage() {
     if (!currentAgreement) return "";
@@ -85,7 +83,7 @@ export function TenantDetailClient({
       .join(", ");
     return [
       `Hi ${tenant.name}, here are your terms for ${signature.pgName} (version ${currentAgreement.version}, effective ${fmtDate(currentAgreement.effectiveDate)}):`,
-      `Room: ${currentAgreement.roomNumber || tenant.roomNumber || "—"}`,
+      `Room: ${currentAgreement.roomNumber || tenant.roomNumber || "not assigned"}`,
       `Monthly rent: ${inr(tenant.rentAmount)}`,
       `Security deposit: ${inr(tenant.depositAmount)} (${currentAgreement.depositRefundable ? "refundable" : "non-refundable"})`,
       `Electricity: ${inr(currentAgreement.electricityRate)} per unit`,
@@ -234,12 +232,8 @@ export function TenantDetailClient({
           <Button size="sm" variant="secondary" onClick={() => setRemOpen(true)}>
             <BellRing className="h-3.5 w-3.5" /> Add reminder
           </Button>
-          {tenant.phone && openCharges.length > 0 && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setShareMsg({ title: "Send dues", subject: `Pending amount — ${signature.pgName}`, message: duesMessage() })}
-            >
+          {openCharges.length > 0 && (
+            <Button size="sm" variant="outline" onClick={() => setDuesReminderOpen(true)}>
               <MessageCircle className="h-3.5 w-3.5" /> Send dues
             </Button>
           )}
@@ -335,7 +329,7 @@ export function TenantDetailClient({
             <SectionHeading>Pending reminders</SectionHeading>
             {tenant.reminders.map((r) => (
               <p key={r.id} className="text-sm">
-                • {r.title} — due {fmtDate(r.dueDate)}
+                • {r.title}, due {fmtDate(r.dueDate)}
               </p>
             ))}
           </div>
@@ -437,6 +431,22 @@ export function TenantDetailClient({
           phone={tenant.phone}
           email={tenant.email}
           defaultLink={paymentLink}
+        />
+      )}
+      {duesReminderOpen && (
+        <SendDuesReminderDialog
+          open={duesReminderOpen}
+          onOpenChange={(o) => {
+            setDuesReminderOpen(o);
+            if (!o) router.refresh();
+          }}
+          tenantId={tenant.id}
+          tenantName={tenant.name}
+          roomLabel={roomLabel}
+          phone={tenant.phone}
+          email={tenant.email}
+          signature={signature}
+          paymentLink={paymentLink}
         />
       )}
 

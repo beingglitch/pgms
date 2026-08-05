@@ -12,12 +12,12 @@ import { BookOpen, MessageCircle, Plus, Receipt, Search, Sparkles, X } from "luc
 import { LedgerFormDialog } from "@/components/ledger-form-dialog";
 import { ChargeFormDialog } from "@/components/charge-form-dialog";
 import { ReceiptDialog } from "@/components/receipt-dialog";
-import { SendMessageDialog } from "@/components/send-message-dialog";
+import { SendDuesReminderDialog } from "@/components/send-dues-reminder-dialog";
 import { Amount, EmptyState, KhataRow, PageTitle, Panel, StatTile } from "@/components/khata";
 import { deleteLedgerEntry, listLedger } from "@/app/actions/ledger";
 import { generateRentCharges, listOutstandingByTenant, waiveCharge } from "@/app/actions/charges";
 import { chargeOutstanding, chargePaid, CHARGE_TYPE_LABELS, num } from "@/lib/charges";
-import { buildDuesMessage, type Signature } from "@/lib/messages";
+import { type Signature } from "@/lib/messages";
 import { useManager } from "@/lib/manager-context";
 import { inr, fmtDate, monthKey, initials, todayISO } from "@/lib/format";
 import { toast } from "sonner";
@@ -151,22 +151,21 @@ export function LedgerClient({
       )}
       {receipt && <ReceiptDialog open={!!receipt} onOpenChange={(o) => !o && setReceipt(null)} entryId={receipt.id} signature={signature} paymentLink={paymentLink} />}
       {remindTarget && (
-        <SendMessageDialog
+        <SendDuesReminderDialog
           open={!!remindTarget}
-          onOpenChange={(o) => !o && setRemindTarget(null)}
-          title={`Remind ${remindTarget.tenant.name}`}
-          subject={`Pending amount — ${signature.pgName}`}
-          message={buildDuesMessage(
-            {
-              name: remindTarget.tenant.name,
-              roomLabel: remindTarget.tenant.room ? `Room ${remindTarget.tenant.room.number}` : remindTarget.tenant.roomNumber,
-            },
-            remindTarget.tenant.charges,
-            signature
-          )}
+          onOpenChange={(o) => {
+            if (!o) {
+              setRemindTarget(null);
+              router.refresh();
+            }
+          }}
+          tenantId={remindTarget.tenant.id}
+          tenantName={remindTarget.tenant.name}
+          roomLabel={remindTarget.tenant.room ? `Room ${remindTarget.tenant.room.number}` : remindTarget.tenant.roomNumber}
           phone={remindTarget.tenant.phone}
           email={remindTarget.tenant.email}
-          defaultLink={paymentLink}
+          signature={signature}
+          paymentLink={paymentLink}
         />
       )}
     </div>

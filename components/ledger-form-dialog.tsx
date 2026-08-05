@@ -47,7 +47,7 @@ export function LedgerFormDialog({
   const [saving, setSaving] = useState(false);
   const [rentPrompt, setRentPrompt] = useState(false);
 
-  const tenantItems = Object.fromEntries(tenants.map((t) => [t.id, `${t.name} — Room ${t.roomNumber || "-"}`]));
+  const tenantItems = Object.fromEntries(tenants.map((t) => [t.id, `${t.name}, Room ${t.roomNumber || "-"}`]));
   const selectedTenant = tenants.find((t) => t.id === tenantId);
 
   function selectTenant(id: string) {
@@ -113,7 +113,7 @@ export function LedgerFormDialog({
                 <SelectContent>
                   {tenants.map((t) => (
                     <SelectItem key={t.id} value={t.id}>
-                      {t.name} — Room {t.roomNumber}
+                      {t.name}, Room {t.roomNumber}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -156,7 +156,7 @@ export function LedgerFormDialog({
             )}
             {rentChanged && (
               <p className="mt-1 text-xs text-amber-700">
-                Decided rent is {inr(Number(selectedTenant!.rentAmount))} — you&apos;ll be asked how to save this.
+                Decided rent is {inr(Number(selectedTenant!.rentAmount))}. You&apos;ll be asked how to save this.
               </p>
             )}
           </div>

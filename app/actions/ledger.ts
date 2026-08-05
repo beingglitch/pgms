@@ -27,7 +27,7 @@ export async function getLedgerEntry(id: string) {
 }
 
 /**
- * Receipts are numbered per month — R-202608-0004 — so the sequence resets
+ * Receipts are numbered per month, like R-202608-0004, so the sequence resets
  * each month and stays short enough to read out over the phone.
  */
 async function nextReceiptNo(date: Date) {

@@ -27,7 +27,7 @@ export function MeterReadingDialog({
   onOpenChange: (open: boolean) => void;
   tenantId?: string;
   roomId?: string;
-  /** Who is sharing this room's meter right now — the bill is split between them. */
+  /** Who is sharing this room's meter right now, so the bill is split between them. */
   occupants?: { id: string; name: string }[];
   isMainMeter?: boolean;
   defaultRate: number;
@@ -145,7 +145,7 @@ export function MeterReadingDialog({
           </div>
           {isMainMeter ? (
             <p className="text-xs text-muted-foreground">
-              The main meter isn&apos;t billed to anyone — it goes to Expenses, where what tenants repay is netted
+              The main meter isn&apos;t billed to anyone. It goes to Expenses, where what tenants repay is netted
               off to show your real electricity cost.
             </p>
           ) : shares.length > 1 ? (

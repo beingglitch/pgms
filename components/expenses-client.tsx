@@ -46,8 +46,8 @@ export function ExpensesClient({
     recurring.filter((e) => e.frequency === "MONTHLY").reduce((s, e) => s + Number(e.amount), 0) +
       recurring.filter((e) => e.frequency === "YEARLY").reduce((s, e) => s + Number(e.amount) / 12, 0)
   );
-  // Every one-time expense this month, minus the main-meter reading — its full
-  // gross cost double-counts with the recovery card below.
+  // Every one-time expense this month, minus the main-meter reading, since its
+  // full gross cost double-counts with the recovery card below.
   const oneTimeThisMonth = expenses
     .filter((e) => e.frequency === "ONE_TIME" && monthKey(e.date) === thisMonth && e.category !== "Electricity (main meter)")
     .reduce((s, e) => s + Number(e.amount), 0);
@@ -164,7 +164,7 @@ export function ExpensesClient({
 
       {expenses.length === 0 && (
         <EmptyState icon={Wallet} title="No expenses yet">
-          Track maid, wifi, repairs, and anything else you spend on the PG — recurring or one-time.
+          Track maid, wifi, repairs, and anything else you spend on the PG, recurring or one-time.
         </EmptyState>
       )}
 

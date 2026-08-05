@@ -139,8 +139,8 @@ export async function addElectricityBill(
 }
 
 /**
- * Deleting a reading takes its charges and its main-meter expense with it —
- * both cascade from the foreign key, so nothing is left stranded.
+ * Deleting a reading takes its charges and its main-meter expense with it,
+ * since both cascade from the foreign key, so nothing is left stranded.
  */
 export async function deleteElectricityBill(actor: string, id: string, tenantId?: string) {
   await prisma.electricityBill.delete({ where: { id } });

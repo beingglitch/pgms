@@ -29,7 +29,7 @@ export function SendMessageDialog({
   defaultLink?: string | null;
   /**
    * Fires when the owner hands the message off to WhatsApp or email. That is
-   * the last moment this app can observe — it means "opened in WhatsApp", not
+   * the last moment this app can observe: it means "opened in WhatsApp", not
    * "delivered", and is recorded that way.
    */
   onSent?: (channel: "whatsapp" | "email") => void;

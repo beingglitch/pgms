@@ -16,7 +16,7 @@ function revalidateRoomViews() {
 /**
  * The whole building: floors, their rooms, and who is in each bed.
  *
- * Beds are positional — a room of capacity 3 has beds 1, 2 and 3 — so an
+ * Beds are positional: a room of capacity 3 has beds 1, 2 and 3, so an
  * unoccupied bed is a gap in the list rather than a record of its own.
  */
 export async function getBuilding() {
@@ -32,7 +32,7 @@ export async function getBuilding() {
               orderBy: { name: "asc" },
               select: { id: true, name: true, photoUrl: true, bedNumber: true, rentOverride: true, rentAmount: true },
             },
-            // Latest reading only — it seeds the next reading's start value.
+            // Latest reading only, since it seeds the next reading's start value.
             meterReadings: { orderBy: { endDate: "desc" }, take: 1 },
           },
         },

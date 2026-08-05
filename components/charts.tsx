@@ -19,8 +19,8 @@ export type MonthPoint = { period: string; billed: number; collected: number };
 
 /**
  * Billed per month, split into what came in and what hasn't. Stacked rather
- * than grouped because the two parts sum to something meaningful — the month's
- * total bill — and the gap between them is the collection shortfall.
+ * than grouped because the two parts sum to something meaningful, the month's
+ * total bill, and the gap between them is the collection shortfall.
  */
 export function CollectionsChart({ data }: { data: MonthPoint[] }) {
   const [hover, setHover] = useState<number | null>(null);
@@ -63,7 +63,7 @@ export function CollectionsChart({ data }: { data: MonthPoint[] }) {
           </clipPath>
         </defs>
 
-        {/* Recessive baseline — the only rule the chart needs. */}
+        {/* Recessive baseline: the only rule the chart needs. */}
         <line x1="0" y1={height - 20} x2="100" y2={height - 20} stroke="currentColor" strokeWidth="0.4" className="text-border" />
 
         {data.map((point, i) => {

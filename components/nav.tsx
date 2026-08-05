@@ -1,19 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { BellRing, BookOpen, DoorOpen, Home, LogOut, Settings, Users, Wallet } from "lucide-react";
 import { useManager } from "@/lib/manager-context";
 import { signOut } from "@/app/actions/auth";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,6 +25,29 @@ export function Nav({ pgName, shortName, logoUrl }: { pgName: string; shortName:
   const { manager, setManager } = useManager();
   const [editOpen, setEditOpen] = useState(false);
   const [draft, setDraft] = useState(manager);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close whenever the route changes, so a link click doesn't leave the menu
+  // open underneath the new page. Adjusted during render rather than in an
+  // effect, since it's derived from a prop change, not an external system.
+  const [lastPathname, setLastPathname] = useState(pathname);
+  if (pathname !== lastPathname) {
+    setLastPathname(pathname);
+    setMenuOpen(false);
+  }
+
+  // A plain state-driven dropdown, not a menu library: it just needs to hold
+  // plain links reliably on every device, and this is the simplest thing
+  // that can't get that wrong.
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onOutside);
+    return () => document.removeEventListener("mousedown", onOutside);
+  }, [menuOpen]);
 
   function save() {
     setManager(draft);
@@ -55,38 +70,54 @@ export function Nav({ pgName, shortName, logoUrl }: { pgName: string; shortName:
             <span className="truncate font-display text-base font-semibold tracking-tight">{pgName}</span>
           </Link>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger className="flex shrink-0 items-center gap-2 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-muted">
+          <div ref={menuRef} className="relative shrink-0">
+            <button
+              onClick={() => setMenuOpen((o) => !o)}
+              aria-expanded={menuOpen}
+              className="flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-muted"
+            >
               <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[9px] font-bold text-primary-foreground">
                 {(manager || "O").slice(0, 1).toUpperCase()}
               </span>
               <span className="max-w-24 truncate">{manager}</span>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-52">
-              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                Signed in as {manager}
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem render={<Link href="/rooms" />}>
-                <DoorOpen className="h-4 w-4" /> Rooms &amp; beds
-              </DropdownMenuItem>
-              <DropdownMenuItem render={<Link href="/settings" />}>
-                <Settings className="h-4 w-4" /> Settings
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => {
-                  setDraft(manager);
-                  setEditOpen(true);
-                }}
-              >
-                <Users className="h-4 w-4" /> Change your name
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => signOut()}>
-                <LogOut className="h-4 w-4" /> Sign out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+            </button>
+
+            {menuOpen && (
+              <div className="absolute right-0 top-full z-50 mt-2 w-52 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg ring-1 ring-foreground/10">
+                <p className="px-2.5 py-1.5 text-xs text-muted-foreground">Signed in as {manager}</p>
+                <div className="my-1 h-px bg-border" />
+                <Link
+                  href="/rooms"
+                  className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                >
+                  <DoorOpen className="h-4 w-4" /> Rooms and beds
+                </Link>
+                <Link
+                  href="/settings"
+                  className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                >
+                  <Settings className="h-4 w-4" /> Settings
+                </Link>
+                <button
+                  onClick={() => {
+                    setDraft(manager);
+                    setEditOpen(true);
+                    setMenuOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+                >
+                  <Users className="h-4 w-4" /> Change your name
+                </button>
+                <div className="my-1 h-px bg-border" />
+                <button
+                  onClick={() => signOut()}
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm text-destructive hover:bg-destructive/10"
+                >
+                  <LogOut className="h-4 w-4" /> Sign out
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -143,7 +174,7 @@ export function Nav({ pgName, shortName, logoUrl }: { pgName: string; shortName:
             <DialogTitle>Your name</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Shown on every ledger entry, reminder, and edit you make — your accountability trail.
+            Shown on every ledger entry, reminder, and edit you make: your accountability trail.
           </p>
           <div>
             <Label className="mb-1.5">Name</Label>

@@ -30,7 +30,7 @@ export function ReminderFormDialog({
   const { manager } = useManager();
   const [tenantId, setTenantId] = useState(fixedTenantId || tenants[0]?.id || "");
   const [type, setType] = useState<"RENT" | "ELECTRICITY" | "OTHER">("RENT");
-  const tenantItems = Object.fromEntries(tenants.map((t) => [t.id, `${t.name} — Room ${t.roomNumber || "-"}`]));
+  const tenantItems = Object.fromEntries(tenants.map((t) => [t.id, `${t.name}, Room ${t.roomNumber || "-"}`]));
   const [title, setTitle] = useState("Rent due");
   const [dueDate, setDueDate] = useState(todayISO());
   const [amount, setAmount] = useState(defaultAmount ? String(defaultAmount) : "");
@@ -72,7 +72,7 @@ export function ReminderFormDialog({
                 <SelectContent>
                   {tenants.map((t) => (
                     <SelectItem key={t.id} value={t.id}>
-                      {t.name} — Room {t.roomNumber}
+                      {t.name}, Room {t.roomNumber}
                     </SelectItem>
                   ))}
                 </SelectContent>

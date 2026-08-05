@@ -104,7 +104,7 @@ export function LoginClient({
             <p className="flex items-start gap-2 text-xs text-muted-foreground">
               <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               Your tenants&apos; ID documents and contact details are stored here. Choose something you don&apos;t use
-              elsewhere — at least 8 characters.
+              elsewhere, at least 8 characters.
             </p>
           )}
         </form>

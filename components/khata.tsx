@@ -41,7 +41,7 @@ export function Amount({
   );
 }
 
-/** A label above a figure — the unit of the dashboard. Becomes a link when a drill-down exists. */
+/** A label above a figure: the unit of the dashboard. Becomes a link when a drill-down exists. */
 export function StatTile({
   label,
   value,

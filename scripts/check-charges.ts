@@ -7,7 +7,7 @@ function check(label: string, actual: unknown, expected: unknown) {
   else console.log(`ok   ${label} = ${a}`);
 }
 
-// Splitting must be exact — no paise may vanish.
+// Splitting must be exact: no paise may vanish.
 check("split 1000/3", splitEvenly(1000, 3), [333.34, 333.33, 333.33]);
 check("split 1000/3 sums to 1000", splitEvenly(1000, 3).reduce((a, b) => a + b, 0), 1000);
 check("split 1000/2", splitEvenly(1000, 2), [500, 500]);
