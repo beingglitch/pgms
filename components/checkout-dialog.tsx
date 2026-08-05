@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -9,10 +9,14 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, X } from "lucide-react";
 import { checkoutTenant, type CheckoutDeductionInput, type PaymentMethod } from "@/app/actions/tenants";
+import { getCheckoutSettlement } from "@/app/actions/reports";
 import { useManager } from "@/lib/manager-context";
 import { inr, todayISO, paymentMethodLabel } from "@/lib/format";
+import { Amount, KhataRow } from "@/components/khata";
 import type { TenantModel } from "@/lib/generated/prisma/models";
 import { toast } from "sonner";
+
+type Settlement = NonNullable<Awaited<ReturnType<typeof getCheckoutSettlement>>>;
 
 const DEDUCTION_CATEGORIES = ["Electricity", "Damage", "Cleaning", "Unpaid rent", "Other"];
 
@@ -34,6 +38,16 @@ export function CheckoutDialog({
   const [refundMethod, setRefundMethod] = useState<PaymentMethod>(tenant.depositMethod as PaymentMethod);
   const [refundChequeNumber, setRefundChequeNumber] = useState("");
   const [saving, setSaving] = useState(false);
+  const [settlement, setSettlement] = useState<Settlement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    getCheckoutSettlement(tenant.id).then((s) => active && setSettlement(s));
+    return () => {
+      active = false;
+    };
+  }, [open, tenant.id]);
 
   function addRow() {
     setDeductions((d) => [...d, { reason: "", amount: 0, category: "Other" }]);
@@ -47,7 +61,8 @@ export function CheckoutDialog({
 
   const validDeductions = deductions.filter((r) => r.reason.trim() && Number(r.amount) > 0);
   const totalDeductions = validDeductions.reduce((s, r) => s + Number(r.amount || 0), 0);
-  const refund = Number(tenant.depositAmount) - totalDeductions;
+  const unpaidCharges = settlement?.unpaidCharges ?? 0;
+  const refund = Number(tenant.depositAmount) - unpaidCharges - totalDeductions;
 
   async function submit() {
     setSaving(true);
@@ -93,8 +108,26 @@ export function CheckoutDialog({
             )}
           </div>
 
+          {settlement && settlement.openCharges.length > 0 && (
+            <div className="rounded-lg border border-ledger/30 bg-ledger/5 p-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-ledger">
+                Still unpaid — comes out of the deposit
+              </p>
+              <div className="mt-1">
+                {settlement.openCharges.map((c) => (
+                  <KhataRow key={c.id} className="py-1.5" amount={<Amount value={c.outstanding} tone="owed" size="sm" />}>
+                    <p className="truncate text-sm">{c.description}</p>
+                  </KhataRow>
+                ))}
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                These are settled automatically at checkout — don&apos;t add them as deductions below as well.
+              </p>
+            </div>
+          )}
+
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Deductions — what can be deducted (damage, unpaid electricity, cleaning, etc.)
+            Deductions — damage, cleaning, and anything else not already billed
           </p>
           {deductions.map((r, i) => (
             <div key={i} className="space-y-2 rounded-lg border p-2 sm:border-0 sm:p-0">
@@ -130,14 +163,26 @@ export function CheckoutDialog({
             <Plus className="h-3.5 w-3.5" /> Add another charge
           </Button>
 
-          <div className="rounded-lg bg-amber-100 p-3 dark:bg-amber-950">
-            <div className="mb-1 flex justify-between text-sm">
-              <span>Total deductions</span>
-              <span className="font-semibold">{inr(totalDeductions)}</span>
+          <div className="rounded-xl border border-border bg-muted/40 p-3">
+            <div className="flex justify-between border-b border-border/70 py-1.5 text-sm">
+              <span>Deposit held</span>
+              <span className="tabular font-semibold">{inr(tenant.depositAmount)}</span>
             </div>
-            <div className={`flex justify-between text-base font-bold ${refund < 0 ? "text-destructive" : ""}`}>
-              <span>{refund >= 0 ? "Refundable to tenant" : "Additional amount owed by tenant"}</span>
-              <span>{inr(Math.abs(refund))}</span>
+            {unpaidCharges > 0 && (
+              <div className="flex justify-between border-b border-border/70 py-1.5 text-sm">
+                <span>Less unpaid charges</span>
+                <span className="tabular font-semibold text-ledger">− {inr(unpaidCharges)}</span>
+              </div>
+            )}
+            <div className="flex justify-between border-b border-border/70 py-1.5 text-sm">
+              <span>Less deductions</span>
+              <span className="tabular font-semibold text-ledger">− {inr(totalDeductions)}</span>
+            </div>
+            <div className="flex items-center justify-between pt-2.5">
+              <span className="text-sm font-semibold">
+                {refund >= 0 ? "Refundable to tenant" : "Owed by tenant"}
+              </span>
+              <Amount value={Math.abs(refund)} tone={refund >= 0 ? "positive" : "owed"} size="lg" />
             </div>
           </div>
 

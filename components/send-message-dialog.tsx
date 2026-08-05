@@ -17,6 +17,7 @@ export function SendMessageDialog({
   phone,
   email,
   defaultLink,
+  onSent,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -26,9 +27,15 @@ export function SendMessageDialog({
   phone?: string | null;
   email?: string | null;
   defaultLink?: string | null;
+  /**
+   * Fires when the owner hands the message off to WhatsApp or email. That is
+   * the last moment this app can observe — it means "opened in WhatsApp", not
+   * "delivered", and is recorded that way.
+   */
+  onSent?: (channel: "whatsapp" | "email") => void;
 }) {
   const [link, setLink] = useState(defaultLink || "");
-  const fullMessage = link ? `${message}\n\nLink: ${link}` : message;
+  const fullMessage = link ? `${message}\n\nPay here: ${link}` : message;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -45,7 +52,12 @@ export function SendMessageDialog({
         </div>
         <div className="flex flex-col gap-2 pt-1">
           {phone ? (
-            <a href={waLink(phone, fullMessage)} target="_blank" rel="noreferrer">
+            <a
+              href={waLink(phone, fullMessage)}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => onSent?.("whatsapp")}
+            >
               <Button className="w-full">
                 <MessageCircle className="h-4 w-4" /> Send on WhatsApp ({phone})
               </Button>
@@ -54,7 +66,7 @@ export function SendMessageDialog({
             <p className="text-xs text-destructive">No phone number on file for WhatsApp.</p>
           )}
           {email ? (
-            <a href={mailtoLink(email, subject, fullMessage)}>
+            <a href={mailtoLink(email, subject, fullMessage)} onClick={() => onSent?.("email")}>
               <Button variant="outline" className="w-full">
                 <Mail className="h-4 w-4" /> Send via email ({email})
               </Button>

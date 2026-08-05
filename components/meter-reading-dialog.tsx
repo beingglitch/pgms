@@ -10,12 +10,15 @@ import { PhotoUpload } from "@/components/photo-upload";
 import { addElectricityBill } from "@/app/actions/electricity";
 import { useManager } from "@/lib/manager-context";
 import { inr, todayISO } from "@/lib/format";
+import { splitEvenly } from "@/lib/charges";
 import { toast } from "sonner";
 
 export function MeterReadingDialog({
   open,
   onOpenChange,
   tenantId,
+  roomId,
+  occupants,
   isMainMeter,
   defaultRate,
   lastReading,
@@ -23,6 +26,9 @@ export function MeterReadingDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   tenantId?: string;
+  roomId?: string;
+  /** Who is sharing this room's meter right now — the bill is split between them. */
+  occupants?: { id: string; name: string }[];
   isMainMeter?: boolean;
   defaultRate: number;
   lastReading?: { endReading: number; endDate: string } | null;
@@ -43,12 +49,24 @@ export function MeterReadingDialog({
   const amount = units * Number(rate || 0);
   const invalid = endReading !== "" && units < 0;
 
+  // Previewed with the same function the server uses, so what the owner sees
+  // here is exactly what gets billed.
+  const shares =
+    !isMainMeter && occupants && occupants.length > 0 && amount > 0
+      ? splitEvenly(amount, occupants.length).map((value, i) => ({
+          id: occupants[i].id,
+          name: occupants[i].name,
+          amount: value,
+        }))
+      : [];
+
   async function submit() {
     if (!startReading || !endReading || invalid) return;
     setSaving(true);
     try {
       await addElectricityBill(manager, {
         tenantId,
+        roomId,
         isMainMeter,
         startReading: Number(startReading),
         endReading: Number(endReading),
@@ -96,26 +114,50 @@ export function MeterReadingDialog({
             <Label className="mb-1">Rate (₹ per unit)</Label>
             <Input type="number" value={rate} onChange={(e) => setRate(e.target.value)} />
           </div>
-          <div className="rounded-lg border bg-muted/40 p-3">
-            <div className="flex justify-between text-sm">
+          <div className="rounded-xl border border-border bg-muted/40 p-3">
+            <div className="flex justify-between border-b border-border/70 pb-1.5 text-sm">
               <span>Units consumed</span>
-              <span className="font-semibold">{units >= 0 ? units : 0}</span>
+              <span className="tabular font-semibold">{units >= 0 ? units : 0}</span>
             </div>
-            <div className="flex justify-between text-sm">
-              <span>Amount</span>
-              <span className="font-semibold">{inr(amount >= 0 ? amount : 0)}</span>
+            <div className="flex justify-between py-1.5 text-sm">
+              <span>Bill for this meter</span>
+              <span className="tabular font-semibold">{inr(amount >= 0 ? amount : 0)}</span>
             </div>
+
+            {/* The split the owner is about to commit to, shown before they save. */}
+            {!isMainMeter && shares.length > 0 && (
+              <div className="border-t border-border/70 pt-1.5">
+                <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                  {shares.length > 1 ? `Split ${shares.length} ways` : "Charged to"}
+                </p>
+                {shares.map((share) => (
+                  <div key={share.id} className="flex justify-between py-0.5 text-sm">
+                    <span className="truncate text-muted-foreground">{share.name}</span>
+                    <span className="tabular font-semibold">{inr(share.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           <div>
             <Label className="mb-1">Meter photo (optional)</Label>
             <PhotoUpload value={photoUrl} onChange={setPhotoUrl} label="Upload meter photo" />
           </div>
-          {isMainMeter && (
+          {isMainMeter ? (
             <p className="text-xs text-muted-foreground">
-              This is not billed to any tenant — it&apos;s automatically added to your Expenses as a recurring
-              electricity cost.
+              The main meter isn&apos;t billed to anyone — it goes to Expenses, where what tenants repay is netted
+              off to show your real electricity cost.
             </p>
-          )}
+          ) : shares.length > 1 ? (
+            <p className="text-xs text-muted-foreground">
+              Saving this raises a charge on each of the {shares.length} tenants sharing the room. It appears in
+              their dues straight away and in the next reminder you send.
+            </p>
+          ) : occupants && occupants.length === 0 ? (
+            <p className="text-xs text-destructive">
+              Nobody lives in this room right now, so there is no one to bill. The reading will still be saved.
+            </p>
+          ) : null}
           <div className="flex gap-3 pt-1">
             <Button variant="outline" className="flex-1" onClick={() => onOpenChange(false)}>
               Cancel

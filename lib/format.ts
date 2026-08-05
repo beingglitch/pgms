@@ -9,17 +9,35 @@ export function fmtDate(d: Date | string | null | undefined) {
   return dt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+/**
+ * Calendar dates are resolved in the property's timezone, not the server's.
+ * Hosted in UTC, `new Date().toISOString()` reports yesterday until 05:30 IST,
+ * which used to flip rent from "due today" to "overdue" overnight.
+ */
+export const PROPERTY_TIMEZONE = "Asia/Kolkata";
+
+const isoFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: PROPERTY_TIMEZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+/** "YYYY-MM-DD" for the given instant, in the property's timezone. */
+export function dateISO(d: Date | string | number = new Date()) {
+  return isoFormatter.format(new Date(d));
+}
+
 export function todayISO() {
-  return new Date().toISOString().slice(0, 10);
+  return dateISO();
 }
 
 export function daysFromNowISO(n: number) {
-  return new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+  return dateISO(Date.now() + n * 86400000);
 }
 
 export function monthKey(d: Date | string) {
-  const dt = new Date(d);
-  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`;
+  return dateISO(d).slice(0, 7);
 }
 
 export function addMonths(dateStr: Date | string, n: number) {

@@ -4,29 +4,103 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ---------------------------------------------------------------------------
+   Fonts are served from /public rather than next/font/google. Two reasons:
+   the build no longer depends on reaching fonts.gstatic.com, and the rupee
+   sign (U+20B9) lives in the latin-ext subset, so every face that renders an
+   amount needs both subsets declared with their own unicode-range.
+--------------------------------------------------------------------------- */
+
+@font-face {
+  font-family: "Bricolage Grotesque";
+  font-style: normal;
+  font-weight: 200 800;
+  font-stretch: 75% 100%;
+  font-display: swap;
+  src: url("/fonts/bricolage-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+    U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Bricolage Grotesque";
+  font-style: normal;
+  font-weight: 200 800;
+  font-stretch: 75% 100%;
+  font-display: swap;
+  src: url("/fonts/bricolage-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "Schibsted Grotesk";
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url("/fonts/schibsted-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+    U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Schibsted Grotesk";
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url("/fonts/schibsted-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* Mono only ever renders serials and readings — digits and ASCII — so the
+   latin subset alone is enough. */
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/plex-mono-400-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+    U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/plex-mono-600-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308,
+    U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ---------------------------------------------------------------------------
+   Khata — after the bahi khata, the cloth-bound ledger this app replaces.
+   Two conventions are borrowed because they carry meaning here, not decoration:
+   entries settled are written in dark ink, amounts owed in red; and every
+   figure sits right-aligned in a ruled column so columns of money can be
+   scanned rather than read.
+--------------------------------------------------------------------------- */
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
-  --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
+  --color-canvas: var(--canvas);
+
+  --font-sans: "Schibsted Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Bricolage Grotesque", "Schibsted Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, "Liberation Mono", monospace;
+  --font-heading: var(--font-display);
+
+  --color-ledger: var(--ledger);
+  --color-ledger-foreground: var(--ledger-foreground);
+  --color-marigold: var(--marigold);
+  --color-marigold-foreground: var(--marigold-foreground);
+  --color-positive: var(--positive);
+
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -39,6 +113,19 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+
+  --color-chart-rent: var(--chart-rent);
+  --color-chart-power: var(--chart-power);
+  --color-chart-other: var(--chart-other);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --shadow-card: 0 1px 2px oklch(0.2 0.03 260 / 0.05), 0 1px 3px oklch(0.2 0.03 260 / 0.04);
+  --shadow-lift: 0 4px 16px oklch(0.2 0.03 260 / 0.08);
+
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -49,82 +136,171 @@
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+
+  /* Cool paper, not cream — the page a ledger is printed on. */
+  --canvas: #f6f6f3;
+  --background: #ffffff;
+  --foreground: #16233a; /* indigo-black ledger ink */
+
+  --card: #ffffff;
+  --card-foreground: #16233a;
+  --popover: #ffffff;
+  --popover-foreground: #16233a;
+
+  /* Deep pine — the colour of the cloth these books are bound in. */
+  --primary: #1e4d45;
+  --primary-foreground: #f7faf8;
+
+  --secondary: #eef0ec;
+  --secondary-foreground: #1e4d45;
+
+  --muted: #f1f2ee;
+  --muted-foreground: #66708a;
+
+  --accent: #e8ede9;
+  --accent-foreground: #1e4d45;
+
+  /* Red ink: what is owed, and only what is owed. */
+  --destructive: #b93a32;
+  --destructive-foreground: #fdf6f5;
+  --ledger: #b93a32;
+  --ledger-foreground: #fdf6f5;
+
+  /* Marigold marks money held rather than earned — deposits, mainly. The
+     -foreground pair is darkened to stay legible as text on white. */
+  --marigold: #d9932b;
+  --marigold-foreground: #7d5210;
+
+  --positive: #2c7a5b;
+
+  --border: #e3e4de;
+  --input: #d9dbd4;
+  --ring: #1e4d45;
+
+  /* Chart marks are their own steps, not the UI inks — the ink colours are too
+     dark and too grey to survive as fills. This set passes the lightness band,
+     chroma floor, all-pairs CVD separation and 3:1 contrast on white. */
+  --chart-rent: #0b8d7b;
+  --chart-power: #c2410c;
+  --chart-other: #7b3fc4;
+  --chart-1: #0b8d7b;
+  --chart-2: #c2410c;
+  --chart-3: #7b3fc4;
+  --chart-4: #3b82c4;
+  --chart-5: #8a7bb0;
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --canvas: #12161d;
+  --background: #171c25;
+  --foreground: #eaecef;
+
+  --card: #1c222c;
+  --card-foreground: #eaecef;
+  --popover: #1c222c;
+  --popover-foreground: #eaecef;
+
+  --primary: #6fb3a3;
+  --primary-foreground: #0f1a17;
+
+  --secondary: #262d38;
+  --secondary-foreground: #eaecef;
+
+  --muted: #232a35;
+  --muted-foreground: #98a1b3;
+
+  --accent: #262d38;
+  --accent-foreground: #eaecef;
+
+  --destructive: #e0655c;
+  --destructive-foreground: #1a0f0e;
+  --ledger: #e0655c;
+  --ledger-foreground: #1a0f0e;
+
+  --marigold: #e8a94a;
+  --marigold-foreground: #f0c583;
+
+  --positive: #5aa886;
+
+  --border: #2c3441;
+  --input: #39424f;
+  --ring: #6fb3a3;
+
+  /* Re-stepped for the dark surface rather than flipped — same three hues,
+     re-validated against #1c222c. */
+  --chart-rent: #0f9e8f;
+  --chart-power: #e2691a;
+  --chart-other: #9b6ae0;
+  --chart-1: #0f9e8f;
+  --chart-2: #e2691a;
+  --chart-3: #9b6ae0;
+  --chart-4: #5a9cf5;
+  --chart-5: #a596cc;
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
-  body {
-    @apply bg-background text-foreground;
-  }
+
   html {
     @apply font-sans;
+  }
+
+  body {
+    @apply bg-canvas text-foreground;
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply font-display;
+    letter-spacing: -0.018em;
+  }
+
+  /* Money and dates line up in columns only if the figures are fixed-width. */
+  .tabular,
+  table,
+  time {
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* A row on a ledger page: hairline-ruled, amount right-aligned, nothing else
+     competing for attention. Used for every money line in the app. */
+  .khata-row {
+    @apply flex items-center justify-between gap-3 border-b border-border/70 py-3 last:border-b-0;
+  }
+
+  /* The amount itself. Always tabular, always right. */
+  .khata-amount {
+    @apply shrink-0 text-right font-display font-semibold;
+    font-variant-numeric: tabular-nums lining-nums;
+    font-variation-settings: "wdth" 95;
+  }
+
+  /* Serial data — receipt numbers, meter readings. */
+  .serial {
+    @apply font-mono text-xs tracking-tight text-muted-foreground;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* An outstanding amount carries the red rule down its left edge, the way a
+     debit is flagged in a paper khata. */
+  .khata-owed {
+    @apply border-l-2 border-ledger pl-3 text-ledger;
   }
 }

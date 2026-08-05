@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "./activity";
+import { chargeOutstanding, planAllocations } from "@/lib/charges";
 
 export type PaymentMethod = "UPI" | "CASH" | "BANK_TRANSFER" | "CHEQUE";
 
@@ -55,11 +56,16 @@ export async function getTenant(id: string) {
   return prisma.tenant.findUnique({
     where: { id },
     include: {
+      room: { include: { floor: { select: { name: true } } } },
       agreements: { orderBy: { version: "desc" } },
       ledgerEntries: { orderBy: { date: "desc" } },
       electricityBills: { orderBy: { endDate: "desc" } },
       reminders: { where: { status: "PENDING" }, orderBy: { dueDate: "asc" } },
       checkoutDeductions: true,
+      charges: {
+        orderBy: [{ dueDate: "desc" }, { createdAt: "desc" }],
+        include: { allocations: { select: { amount: true } } },
+      },
     },
   });
 }
@@ -180,6 +186,41 @@ export async function reviseAgreement(actor: string, tenantId: string, fields: A
 
 export type CheckoutDeductionInput = { reason: string; amount: number; category?: string };
 
+/**
+ * Record that a tenant is leaving. Their bed still counts as occupied until
+ * the checkout itself, but the vacancy and the deposit refund are now visible
+ * ahead of time.
+ */
+export async function giveNotice(
+  actor: string,
+  tenantId: string,
+  input: { noticeDate: string; expectedVacateDate: string }
+) {
+  const tenant = await prisma.tenant.update({
+    where: { id: tenantId },
+    data: {
+      noticeDate: new Date(input.noticeDate),
+      expectedVacateDate: new Date(input.expectedVacateDate),
+    },
+  });
+
+  await logActivity(actor, "Notice recorded", `${tenant.name} · leaving ${input.expectedVacateDate}`);
+  revalidatePath("/tenants");
+  revalidatePath(`/tenants/${tenantId}`);
+  revalidatePath("/");
+}
+
+export async function cancelNotice(actor: string, tenantId: string) {
+  const tenant = await prisma.tenant.update({
+    where: { id: tenantId },
+    data: { noticeDate: null, expectedVacateDate: null },
+  });
+  await logActivity(actor, "Notice withdrawn", tenant.name);
+  revalidatePath("/tenants");
+  revalidatePath(`/tenants/${tenantId}`);
+  revalidatePath("/");
+}
+
 export async function checkoutTenant(
   actor: string,
   tenantId: string,
@@ -191,9 +232,39 @@ export async function checkoutTenant(
   }
 ) {
   const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: tenantId } });
-  const totalDeductions = input.deductions.reduce((s, d) => s + Number(d.amount || 0), 0);
-  const refundAmount = Number(tenant.depositAmount) - totalDeductions;
   const checkoutDate = new Date(input.checkoutDate);
+  const totalDeductions = input.deductions.reduce((s, d) => s + Number(d.amount || 0), 0);
+
+  // Anything still on their account comes out of the deposit first, recorded as
+  // a real payment so the charges show settled rather than silently vanishing.
+  const openCharges = await prisma.charge.findMany({
+    where: { tenantId, waived: false },
+    orderBy: [{ dueDate: "asc" }, { createdAt: "asc" }],
+    include: { allocations: { select: { amount: true } } },
+  });
+  const unpaidCharges = openCharges.reduce((sum, c) => sum + chargeOutstanding(c), 0);
+
+  if (unpaidCharges > 0.005) {
+    const settlement = await prisma.ledgerEntry.create({
+      data: {
+        tenantId,
+        type: "OTHER",
+        amount: unpaidCharges,
+        date: checkoutDate,
+        mode: input.refundMethod,
+        note: "Outstanding charges settled from security deposit",
+        recordedBy: actor,
+      },
+    });
+    const { allocations } = planAllocations(unpaidCharges, openCharges);
+    if (allocations.length > 0) {
+      await prisma.allocation.createMany({
+        data: allocations.map((a) => ({ ...a, ledgerEntryId: settlement.id })),
+      });
+    }
+  }
+
+  const refundAmount = Number(tenant.depositAmount) - unpaidCharges - totalDeductions;
 
   await prisma.$transaction([
     prisma.tenant.update({
@@ -204,6 +275,8 @@ export async function checkoutTenant(
         refundAmount,
         refundMethod: input.refundMethod,
         refundChequeNumber: input.refundChequeNumber,
+        // Free the bed so the room map shows it available again.
+        roomId: null,
       },
     }),
     ...(input.deductions.length
@@ -225,12 +298,15 @@ export async function checkoutTenant(
         amount: refundAmount,
         date: checkoutDate,
         mode: input.refundMethod,
-        note:
+        note: [
+          `Deposit ₹${Number(tenant.depositAmount)}`,
+          unpaidCharges > 0.005 ? `unpaid charges ₹${unpaidCharges}` : null,
           input.deductions.length > 0
-            ? `Deposit ${tenant.depositAmount} minus deductions (${input.deductions
-                .map((d) => `${d.reason}: ${d.amount}`)
-                .join(", ")})`
-            : `Full deposit refunded`,
+            ? `deductions (${input.deductions.map((d) => `${d.reason}: ${d.amount}`).join(", ")})`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" less "),
         recordedBy: actor,
       },
     }),
@@ -244,6 +320,8 @@ export async function checkoutTenant(
 
   revalidatePath("/tenants");
   revalidatePath(`/tenants/${tenantId}`);
+  revalidatePath("/rooms");
+  revalidatePath("/ledger");
   revalidatePath("/");
-  return { refundAmount, totalDeductions };
+  return { refundAmount, totalDeductions, unpaidCharges };
 }

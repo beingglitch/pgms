@@ -1,20 +1,7 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { ManagerProvider } from "@/lib/manager-context";
-import { Nav } from "@/components/nav";
 import { Toaster } from "@/components/ui/sonner";
 import { getPgInfo } from "@/app/actions/settings";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
 
 export const dynamic = "force-dynamic";
 
@@ -29,27 +16,25 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export const viewport: Viewport = {
-  themeColor: "#18181b",
+  themeColor: "#FDFBF7",
   width: "device-width",
   initialScale: 1,
 };
 
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const pgInfo = await getPgInfo();
   return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
-      <body className="min-h-full flex flex-col bg-muted/30">
-        <ManagerProvider initialOwnerName={pgInfo.ownerName}>
-          <Nav pgName={pgInfo.name} shortName={pgInfo.shortName} logoUrl={pgInfo.logoUrl} />
-          <main className="mx-auto w-full max-w-3xl flex-1 px-4 pb-24 pt-4 sm:px-6 sm:pb-10">{children}</main>
-        </ManagerProvider>
+    <html lang="en" className="h-full antialiased">
+      <head>
+        {/* The body face is on the critical path for every screen. */}
+        <link rel="preload" as="font" type="font/woff2" href="/fonts/schibsted-latin.woff2" crossOrigin="anonymous" />
+        <link rel="preload" as="font" type="font/woff2" href="/fonts/bricolage-latin.woff2" crossOrigin="anonymous" />
+      </head>
+      <body className="flex min-h-full flex-col bg-canvas text-foreground">
+        {children}
         <Toaster />
       </body>
     </html>

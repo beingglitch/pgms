@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "./activity";
+import type { SplitMode } from "@/lib/generated/prisma/enums";
 
 export async function getPgInfo() {
   const info = await prisma.pgInfo.findUnique({ where: { id: "singleton" } });
@@ -21,6 +22,9 @@ export async function updatePgInfo(
     totalBeds: number;
     paymentLink: string;
     electricityRatePerUnit: number;
+    rentDueDay: number;
+    dueSoonDays: number;
+    defaultSplitMode: SplitMode;
   }
 ) {
   await prisma.pgInfo.upsert({
@@ -30,6 +34,8 @@ export async function updatePgInfo(
   });
   await logActivity(actor, "Property details updated", Object.keys(data).join(", "));
   revalidatePath("/settings");
+  revalidatePath("/rooms");
+  revalidatePath("/ledger");
   revalidatePath("/");
 }
 

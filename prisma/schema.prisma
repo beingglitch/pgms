@@ -43,6 +43,25 @@ enum ExpenseFrequency {
   YEARLY
 }
 
+/// How a room's total rent is divided between the people living in it.
+/// BY_CAPACITY  — room rent / number of beds. Each tenant pays a stable per-bed
+///                rate and an empty bed is the owner's loss, not the tenants'.
+/// BY_OCCUPANTS — room rent / people currently living there. Rent goes up for
+///                everyone when someone moves out.
+/// CUSTOM       — ignore the room rent, use each tenant's own amount.
+enum SplitMode {
+  BY_CAPACITY
+  BY_OCCUPANTS
+  CUSTOM
+}
+
+enum ChargeType {
+  RENT
+  ELECTRICITY
+  LAUNDRY
+  OTHER
+}
+
 model PgInfo {
   id                     String  @id @default("singleton")
   name                   String  @default("My PG")
@@ -54,6 +73,47 @@ model PgInfo {
   paymentLink            String  @default("")
   ownerName              String  @default("Owner")
   electricityRatePerUnit Decimal @db.Decimal(10, 2) @default(8)
+
+  /// Rent is raised on this day of each month.
+  rentDueDay       Int       @default(5)
+  /// Window the dashboard "due soon" counter looks ahead by.
+  dueSoonDays      Int       @default(7)
+  /// Fallback split for rooms and floors that don't override it.
+  defaultSplitMode SplitMode @default(BY_CAPACITY)
+  /// scrypt hash of the owner's password. Empty until first setup.
+  passwordHash     String    @default("")
+}
+
+model Floor {
+  id        String     @id @default(cuid())
+  name      String
+  order     Int        @default(0)
+  /// Overrides the PG default for every room on this floor.
+  splitMode SplitMode?
+  rooms     Room[]
+  createdAt DateTime   @default(now())
+
+  @@unique([name])
+}
+
+model Room {
+  id      String @id @default(cuid())
+  floor   Floor  @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  floorId String
+  number  String
+  /// Number of beds — 1 single, 2 double, 3 triple, and so on.
+  capacity Int    @default(1)
+  /// Rent for the whole room. Divided between occupants per splitMode.
+  rentAmount Decimal @db.Decimal(10, 2) @default(0)
+  /// Overrides the floor and PG defaults for this room only.
+  splitMode SplitMode?
+  note      String?
+  createdAt DateTime   @default(now())
+
+  tenants       Tenant[]
+  meterReadings ElectricityBill[]
+
+  @@unique([floorId, number])
 }
 
 model Tenant {
@@ -64,9 +124,16 @@ model Tenant {
   fatherName String?
   motherName String?
 
+  room       Room?   @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  roomId     String?
+  /// Free-text room label, kept for tenants not yet mapped to a Room record.
   roomNumber String?
   bedNumber  String?
+  /// Fallback rent for tenants with no room. Prefer the room split; see
+  /// effectiveRent() in lib/charges.ts for the resolution order.
   rentAmount    Decimal @db.Decimal(10, 2)
+  /// Set to pin this tenant's rent regardless of the room split.
+  rentOverride  Decimal? @db.Decimal(10, 2)
   depositAmount Decimal @db.Decimal(10, 2)
   depositMethod       PaymentMode @default(CASH)
   depositChequeNumber String?
@@ -89,6 +156,10 @@ model Tenant {
   notes            String?
 
   status       TenantStatus   @default(ACTIVE)
+  /// Date the tenant gave notice, and the date they expect to leave. Drives
+  /// the vacancy forecast and deposit-refund planning.
+  noticeDate         DateTime?
+  expectedVacateDate DateTime?
   vacatedDate  DateTime?
   refundAmount Decimal?       @db.Decimal(10, 2)
   refundMethod PaymentMode?
@@ -103,8 +174,51 @@ model Tenant {
   electricityBills   ElectricityBill[]
   reminders          Reminder[]
   checkoutDeductions CheckoutDeduction[]
+  charges            Charge[]
 
   @@index([status])
+  @@index([roomId])
+}
+
+/// Something the tenant owes. Payments are matched to charges through
+/// Allocation, so a charge can be partly paid and the shortfall stays visible.
+model Charge {
+  id          String     @id @default(cuid())
+  tenant      Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId    String
+  type        ChargeType
+  /// Billing month this charge belongs to, as "YYYY-MM".
+  period      String
+  description String
+  amount      Decimal    @db.Decimal(10, 2)
+  dueDate     DateTime
+  /// Set when the charge was generated from a meter reading.
+  sourceBill   ElectricityBill? @relation(fields: [sourceBillId], references: [id], onDelete: Cascade)
+  sourceBillId String?
+  /// Written off — still shown for the record, but not counted as owed.
+  waived      Boolean    @default(false)
+  createdBy   String?
+  createdAt   DateTime   @default(now())
+
+  allocations Allocation[]
+
+  @@index([tenantId, period])
+  @@index([dueDate])
+  @@index([type])
+}
+
+/// Links money received to the charge it settles. One payment can be spread
+/// across several charges, and one charge can be settled by several payments.
+model Allocation {
+  id            String      @id @default(cuid())
+  charge        Charge      @relation(fields: [chargeId], references: [id], onDelete: Cascade)
+  chargeId      String
+  ledgerEntry   LedgerEntry @relation(fields: [ledgerEntryId], references: [id], onDelete: Cascade)
+  ledgerEntryId String
+  amount        Decimal     @db.Decimal(10, 2)
+
+  @@index([chargeId])
+  @@index([ledgerEntryId])
 }
 
 model Agreement {
@@ -139,8 +253,12 @@ model LedgerEntry {
   date       DateTime
   mode       PaymentMode @default(UPI)
   note       String?
+  /// Sequential receipt number, e.g. "R-202608-0004".
+  receiptNo  String?     @unique
   recordedBy String?
   createdAt  DateTime    @default(now())
+
+  allocations Allocation[]
 
   @@index([tenantId])
   @@index([date])
@@ -148,6 +266,11 @@ model LedgerEntry {
 
 model ElectricityBill {
   id           String   @id @default(cuid())
+  /// Room the sub-meter belongs to. A room meter is read once and split across
+  /// whoever is living there, so readings hang off the room, not a tenant.
+  room         Room?    @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  roomId       String?
+  /// Legacy per-tenant readings taken before rooms existed.
   tenant       Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tenantId     String?
   isMainMeter  Boolean  @default(false)
@@ -162,7 +285,11 @@ model ElectricityBill {
   recordedBy   String?
   createdAt    DateTime @default(now())
 
+  charges  Charge[]
+  expenses Expense[]
+
   @@index([tenantId])
+  @@index([roomId])
   @@index([isMainMeter])
   @@index([endDate])
 }
@@ -192,8 +319,14 @@ model Expense {
   active     Boolean          @default(true)
   createdAt  DateTime         @default(now())
 
+  /// Set when the expense was raised automatically from a main-meter reading,
+  /// so deleting the reading cleans up the expense instead of orphaning it.
+  sourceBill   ElectricityBill? @relation(fields: [sourceBillId], references: [id], onDelete: Cascade)
+  sourceBillId String?
+
   @@index([frequency])
   @@index([date])
+  @@index([sourceBillId])
 }
 
 model Reminder {

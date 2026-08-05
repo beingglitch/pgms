@@ -7,10 +7,19 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Search, Plus, ChevronRight, Users } from "lucide-react";
 import { TenantFormDialog } from "@/components/tenant-form-dialog";
+import { Amount, EmptyState, PageTitle } from "@/components/khata";
 import { inr, initials } from "@/lib/format";
 import type { TenantModel } from "@/lib/generated/prisma/models";
 
-export function TenantsClient({ tenants }: { tenants: TenantModel[] }) {
+type TenantRow = TenantModel & { room: { number: string; floor: { name: string } } | null };
+
+export function TenantsClient({
+  tenants,
+  outstandingByTenant,
+}: {
+  tenants: TenantRow[];
+  outstandingByTenant: Record<string, { amount: number; overdue: boolean }>;
+}) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"ACTIVE" | "VACATED" | "ALL">("ACTIVE");
   const [formOpen, setFormOpen] = useState(false);
@@ -19,24 +28,34 @@ export function TenantsClient({ tenants }: { tenants: TenantModel[] }) {
     if (filter !== "ALL" && t.status !== filter) return false;
     if (!query) return true;
     const q = query.toLowerCase();
-    return t.name.toLowerCase().includes(q) || t.phone.includes(q) || t.roomNumber?.toLowerCase().includes(q);
+    return (
+      t.name.toLowerCase().includes(q) ||
+      t.phone.includes(q) ||
+      t.roomNumber?.toLowerCase().includes(q) ||
+      t.room?.number.toLowerCase().includes(q)
+    );
   });
 
   return (
     <div>
-      <div className="mb-3 flex items-center gap-2">
-        <div className="flex flex-1 items-center gap-2 rounded-lg border bg-background px-3 py-2">
-          <Search className="h-4 w-4 text-muted-foreground" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search name, phone, room"
-            className="w-full bg-transparent text-sm outline-none"
-          />
-        </div>
-        <Button onClick={() => setFormOpen(true)}>
-          <Plus className="h-4 w-4" /> Add
-        </Button>
+      <PageTitle
+        action={
+          <Button size="sm" onClick={() => setFormOpen(true)}>
+            <Plus className="h-4 w-4" /> Add tenant
+          </Button>
+        }
+      >
+        Tenants
+      </PageTitle>
+
+      <div className="mb-3 flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2">
+        <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search name, phone, room"
+          className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+        />
       </div>
 
       <div className="mb-4 flex gap-2">
@@ -44,8 +63,8 @@ export function TenantsClient({ tenants }: { tenants: TenantModel[] }) {
           <button
             key={f}
             onClick={() => setFilter(f)}
-            className={`rounded-full border px-3 py-1 text-xs font-semibold capitalize ${
-              filter === f ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+            className={`rounded-full border px-3 py-1 text-xs font-semibold capitalize transition-colors ${
+              filter === f ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
             }`}
           >
             {f.toLowerCase()}
@@ -54,36 +73,49 @@ export function TenantsClient({ tenants }: { tenants: TenantModel[] }) {
       </div>
 
       {filtered.length === 0 && (
-        <div className="flex flex-col items-center gap-2 py-14 text-center">
-          <Users className="h-8 w-8 text-muted-foreground" />
-          <p className="font-semibold">No tenants here</p>
-          <p className="max-w-xs text-sm text-muted-foreground">
-            Onboard your first tenant with their photo, Aadhaar, and agreement.
-          </p>
-        </div>
+        <EmptyState
+          icon={Users}
+          title="No tenants here"
+          action={
+            <Button onClick={() => setFormOpen(true)}>
+              <Plus className="h-4 w-4" /> Add your first tenant
+            </Button>
+          }
+        >
+          Onboard a tenant with their photo, ID, and agreement.
+        </EmptyState>
       )}
 
       <div className="space-y-2">
-        {filtered.map((t) => (
-          <Link
-            key={t.id}
-            href={`/tenants/${t.id}`}
-            className="flex items-center gap-3 rounded-xl border bg-background p-3"
-          >
-            <Avatar>
-              <AvatarImage src={t.photoUrl ?? undefined} />
-              <AvatarFallback>{initials(t.name)}</AvatarFallback>
-            </Avatar>
-            <div className="min-w-0 flex-1">
-              <p className="truncate font-semibold">{t.name}</p>
-              <p className="text-xs text-muted-foreground">
-                Room {t.roomNumber || "—"} · {inr(t.rentAmount)}/mo
-              </p>
-            </div>
-            {t.status === "VACATED" && <Badge variant="destructive">Vacated</Badge>}
-            <ChevronRight className="h-4 w-4 text-muted-foreground" />
-          </Link>
-        ))}
+        {filtered.map((t) => {
+          const due = outstandingByTenant[t.id];
+          const roomLabel = t.room ? `${t.room.floor.name} · Room ${t.room.number}` : t.roomNumber ? `Room ${t.roomNumber}` : "No room";
+          return (
+            <Link
+              key={t.id}
+              href={`/tenants/${t.id}`}
+              className="flex items-center gap-3 rounded-xl border border-border bg-background p-3 transition-colors hover:bg-muted/40"
+            >
+              <Avatar className="h-10 w-10">
+                <AvatarImage src={t.photoUrl ?? undefined} />
+                <AvatarFallback>{initials(t.name)}</AvatarFallback>
+              </Avatar>
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-semibold">{t.name}</p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {roomLabel} · {inr(t.rentAmount)}/mo
+                </p>
+              </div>
+              {due && due.amount > 0.005 ? (
+                <Amount value={due.amount} tone="owed" size="sm" />
+              ) : t.status === "ACTIVE" ? (
+                <span className="text-[11px] font-semibold text-positive">settled</span>
+              ) : null}
+              {t.status === "VACATED" && <Badge variant="destructive">Vacated</Badge>}
+              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+            </Link>
+          );
+        })}
       </div>
 
       <TenantFormDialog open={formOpen} onOpenChange={setFormOpen} />
