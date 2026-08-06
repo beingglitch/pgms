@@ -410,10 +410,12 @@ export function TenantDetailClient({
         occupants={tenant.roomId ? [{ id: tenant.id, name: tenant.name }] : undefined}
         defaultRate={electricityRate}
         lastReading={
+          // Legacy per-tenant bills (no room) are always created start+end
+          // together, so this is never actually an open reading.
           tenant.electricityBills[0]
             ? {
                 endReading: Number(tenant.electricityBills[0].endReading),
-                endDate: tenant.electricityBills[0].endDate.toISOString(),
+                endDate: tenant.electricityBills[0].endDate!.toISOString(),
               }
             : null
         }
@@ -443,6 +445,7 @@ export function TenantDetailClient({
           tenantId={tenant.id}
           tenantName={tenant.name}
           roomLabel={roomLabel}
+          roomId={tenant.roomId}
           phone={tenant.phone}
           email={tenant.email}
           signature={signature}

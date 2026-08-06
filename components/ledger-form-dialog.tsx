@@ -24,23 +24,32 @@ export function LedgerFormDialog({
   tenants,
   fixedTenantId,
   defaultAmount,
+  outstandingAmount,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   tenants: Pick<TenantModel, "id" | "name" | "roomNumber" | "rentAmount">[];
   fixedTenantId?: string;
   defaultAmount?: number;
+  /**
+   * Set when this dialog is settling a specific tenant's dues rather than
+   * just recording a payment. Pre-fills the full outstanding amount, and
+   * switches the amount field's helper text from "does this change their
+   * rent going forward" (irrelevant here) to "how much is left after this".
+   */
+  outstandingAmount?: number;
 }) {
   const router = useRouter();
   const { manager } = useManager();
   const [tenantId, setTenantId] = useState(fixedTenantId || tenants[0]?.id || "");
   const [type, setType] = useState<"RENT" | "DEPOSIT" | "OTHER">("RENT");
   const [amount, setAmount] = useState(() => {
+    if (outstandingAmount) return String(outstandingAmount);
     if (defaultAmount) return String(defaultAmount);
     const initialTenant = tenants.find((t) => t.id === (fixedTenantId || tenants[0]?.id));
     return initialTenant ? String(Number(initialTenant.rentAmount)) : "";
   });
-  const [amountTouched, setAmountTouched] = useState(!!defaultAmount);
+  const [amountTouched, setAmountTouched] = useState(!!defaultAmount || !!outstandingAmount);
   const [date, setDate] = useState(todayISO());
   const [mode, setMode] = useState("UPI");
   const [note, setNote] = useState("");
@@ -70,8 +79,18 @@ export function LedgerFormDialog({
     setAmount((a) => String(Math.max(0, Number(a || 0) + delta)));
   }
 
+  // Settling dues is a different question from "did the monthly rent change":
+  // an odd partial amount against outstanding shouldn't prompt "should this
+  // be their new rent going forward?".
   const rentChanged =
-    type === "RENT" && !!selectedTenant && amount !== "" && Number(amount) !== Number(selectedTenant.rentAmount);
+    outstandingAmount === undefined &&
+    type === "RENT" &&
+    !!selectedTenant &&
+    amount !== "" &&
+    Number(amount) !== Number(selectedTenant.rentAmount);
+
+  const remainingAfterPayment =
+    outstandingAmount !== undefined ? Math.max(0, outstandingAmount - Number(amount || 0)) : undefined;
 
   async function submit() {
     if (!tenantId || !amount) return;
@@ -102,9 +121,15 @@ export function LedgerFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Record a transaction</DialogTitle>
+          <DialogTitle>{outstandingAmount !== undefined ? "Record payment" : "Record a transaction"}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
+          {outstandingAmount !== undefined && (
+            <p className="rounded-lg bg-muted/50 px-3 py-2 text-sm">
+              <span className="font-semibold">{selectedTenant?.name}</span> owes{" "}
+              <span className="font-semibold">{inr(outstandingAmount)}</span> right now.
+            </p>
+          )}
           {!fixedTenantId && (
             <div>
               <Label className="mb-1">Tenant</Label>
@@ -157,6 +182,13 @@ export function LedgerFormDialog({
             {rentChanged && (
               <p className="mt-1 text-xs text-amber-700">
                 Decided rent is {inr(Number(selectedTenant!.rentAmount))}. You&apos;ll be asked how to save this.
+              </p>
+            )}
+            {remainingAfterPayment !== undefined && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {remainingAfterPayment > 0
+                  ? `${inr(remainingAfterPayment)} still left after this payment.`
+                  : "Settles everything they owe."}
               </p>
             )}
           </div>

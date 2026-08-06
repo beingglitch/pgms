@@ -1,4 +1,4 @@
-import { splitEvenly, rentShare, effectiveRent, planAllocations, summariseCharges, dueDateFor, resolveSplitMode } from "@/lib/charges";
+import { splitEvenly, rentShare, effectiveRent, planAllocations, summariseCharges, addCalendarMonths, pendingRentCycles, resolveSplitMode } from "@/lib/charges";
 
 let fails = 0;
 function check(label: string, actual: unknown, expected: unknown) {
@@ -53,9 +53,46 @@ check("both overdue as of Aug 5", s.overdue, 3500);
 // A waived charge is owed by nobody.
 check("waived owes nothing", summariseCharges([{ ...charges[0], waived: true }]).total.outstanding, 0);
 
-// Due day clamps to short months.
-check("due day 31 in Feb", dueDateFor("2026-02", 31).toISOString().slice(0, 10), "2026-02-28");
-check("due day 5 in Aug (UTC-stable)", dueDateFor("2026-08", 5).toISOString().slice(0, 10), "2026-08-05");
+// addCalendarMonths clamps to the target month's last day, unlike native
+// Date.setMonth (which would roll Jan 31 + 1 month into "Mar 3").
+check("add 1 month, Jan 31 -> Feb 28", addCalendarMonths("2026-01-31", 1).toISOString().slice(0, 10), "2026-02-28");
+check("add 1 month, normal case (UTC-stable)", addCalendarMonths("2026-08-05", 1).toISOString().slice(0, 10), "2026-09-05");
+check("add 0 months is a no-op", addCalendarMonths("2026-08-05", 0).toISOString().slice(0, 10), "2026-08-05");
+
+// The exact scenario rent cycles are built around: joined July 5, and as of
+// November 20 every cycle that's started since is due, July through
+// November, five of them, each on the same day-of-month they joined on.
+const cyclesSoFar = pendingRentCycles("2025-07-05", new Date("2025-11-20T00:00:00Z"), new Set());
+check(
+  "join July 5, as of Nov 20 -> 5 cycles due",
+  cyclesSoFar.map((c) => ({ start: c.start.toISOString().slice(0, 10), period: c.period })),
+  [
+    { start: "2025-07-05", period: "2025-07" },
+    { start: "2025-08-05", period: "2025-08" },
+    { start: "2025-09-05", period: "2025-09" },
+    { start: "2025-10-05", period: "2025-10" },
+    { start: "2025-11-05", period: "2025-11" },
+  ]
+);
+
+// Cycles already billed are skipped, not re-created.
+const partiallyBilled = pendingRentCycles(
+  "2025-07-05",
+  new Date("2025-11-20T00:00:00Z"),
+  new Set(["2025-07", "2025-08", "2025-09"])
+);
+check(
+  "already-billed cycles are skipped",
+  partiallyBilled.map((c) => c.period),
+  ["2025-10", "2025-11"]
+);
+
+// A cycle that hasn't started yet never appears, even with nothing billed.
+check(
+  "no cycles before the join date",
+  pendingRentCycles("2025-07-05", new Date("2025-07-04T00:00:00Z"), new Set()).length,
+  0
+);
 
 console.log(fails === 0 ? "\nAll checks passed." : `\n${fails} check(s) failed.`);
 process.exit(fails === 0 ? 0 : 1);

@@ -202,8 +202,10 @@ export function ExpensesClient({
         isMainMeter
         defaultRate={electricityRate}
         lastReading={
+          // listMainMeterReadings() only returns closed readings, so these
+          // are never actually null; TS just can't see that from here.
           lastMainReading
-            ? { endReading: lastMainReading.endReading, endDate: lastMainReading.endDate.toISOString() }
+            ? { endReading: lastMainReading.endReading!, endDate: lastMainReading.endDate!.toISOString() }
             : null
         }
       />

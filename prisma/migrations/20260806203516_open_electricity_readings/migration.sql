@@ -1,0 +1,5 @@
+-- AlterTable
+ALTER TABLE "ElectricityBill" ALTER COLUMN "units" DROP NOT NULL,
+ALTER COLUMN "amount" DROP NOT NULL,
+ALTER COLUMN "endDate" DROP NOT NULL,
+ALTER COLUMN "endReading" DROP NOT NULL;

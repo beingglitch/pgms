@@ -210,10 +210,10 @@ export function RoomsClient({
           occupants={metering.tenants.map((t) => ({ id: t.id, name: t.name }))}
           defaultRate={electricityRate}
           lastReading={
-            metering.meterReadings[0]
+            metering.lastClosedReading
               ? {
-                  endReading: Number(metering.meterReadings[0].endReading),
-                  endDate: metering.meterReadings[0].endDate.toISOString(),
+                  endReading: Number(metering.lastClosedReading.endReading),
+                  endDate: metering.lastClosedReading.endDate!.toISOString(),
                 }
               : null
           }

@@ -217,6 +217,7 @@ export function RemindersClient({
           tenantId={customFor.tenant.id}
           tenantName={customFor.tenant.name}
           roomLabel={customFor.tenant.room ? `Room ${customFor.tenant.room.number}` : customFor.tenant.roomNumber}
+          roomId={customFor.tenant.room?.id}
           phone={customFor.tenant.phone}
           email={customFor.tenant.email}
           signature={signature}

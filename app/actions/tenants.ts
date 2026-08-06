@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "./activity";
 import { chargeOutstanding, planAllocations } from "@/lib/charges";
+import { generateFirstRentCharge } from "./charges";
+import { startElectricityReading } from "./electricity";
 
 export type PaymentMethod = "UPI" | "CASH" | "BANK_TRANSFER" | "CHEQUE";
 
@@ -15,6 +17,11 @@ export type TenantInput = {
   motherName?: string;
   roomNumber?: string;
   bedNumber?: string;
+  /** Set at onboarding only: assigns the bed and bills the room's split from charge one. */
+  roomId?: string;
+  /** Starting meter reading + proof photo, captured at onboarding if the room has no reading yet. */
+  meterStartReading?: number;
+  meterStartPhotoUrl?: string;
   rentAmount: number;
   depositAmount: number;
   depositMethod: PaymentMethod;
@@ -71,6 +78,19 @@ export async function getTenant(id: string) {
 }
 
 export async function createTenant(actor: string, input: TenantInput, agreement: AgreementInput) {
+  // Fetched before the tenant exists, so the first charge can bill through
+  // the room split rather than the tenant's flat rentAmount when a bed was
+  // picked at onboarding.
+  const room = input.roomId
+    ? await prisma.room.findUnique({
+        where: { id: input.roomId },
+        include: {
+          floor: { select: { splitMode: true } },
+          tenants: { where: { status: "ACTIVE" }, select: { id: true } },
+        },
+      })
+    : null;
+
   const tenant = await prisma.tenant.create({
     data: {
       name: input.name,
@@ -78,7 +98,8 @@ export async function createTenant(actor: string, input: TenantInput, agreement:
       email: input.email,
       fatherName: input.fatherName,
       motherName: input.motherName,
-      roomNumber: input.roomNumber,
+      roomId: input.roomId,
+      roomNumber: room?.number ?? input.roomNumber,
       bedNumber: input.bedNumber,
       rentAmount: input.rentAmount,
       depositAmount: input.depositAmount,
@@ -119,7 +140,30 @@ export async function createTenant(actor: string, input: TenantInput, agreement:
     },
   });
   await logActivity(actor, "Tenant onboarded", `${tenant.name} · Room ${tenant.roomNumber || "-"}`);
+
+  await generateFirstRentCharge(actor, {
+    id: tenant.id,
+    joinDate: tenant.joinDate,
+    rentAmount: tenant.rentAmount,
+    rentOverride: tenant.rentOverride,
+    // The room's existing occupants plus this tenant, so a BY_OCCUPANTS split
+    // reflects the room as it is the moment they move in, not before.
+    room: room ? { ...room, tenants: [...room.tenants, { id: tenant.id }] } : null,
+  });
+
+  if (input.roomId && input.meterStartReading !== undefined) {
+    await startElectricityReading(actor, {
+      roomId: input.roomId,
+      startReading: input.meterStartReading,
+      startDate: input.joinDate,
+      ratePerUnit: agreement.electricityRate,
+      photoUrl: input.meterStartPhotoUrl,
+    });
+  }
+
   revalidatePath("/tenants");
+  revalidatePath("/ledger");
+  if (input.roomId) revalidatePath("/rooms");
   revalidatePath("/");
   return tenant;
 }

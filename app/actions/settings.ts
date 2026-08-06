@@ -22,7 +22,6 @@ export async function updatePgInfo(
     totalBeds: number;
     paymentLink: string;
     electricityRatePerUnit: number;
-    rentDueDay: number;
     dueSoonDays: number;
     defaultSplitMode: SplitMode;
   }

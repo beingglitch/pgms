@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { MessageCircle, Mail, Copy, Plus } from "lucide-react";
+import { MessageCircle, Mail, Copy, Plus, Zap } from "lucide-react";
 import { getTenantDues, addManualCharge } from "@/app/actions/charges";
+import { closeElectricityReading, getOpenReadingForRoom } from "@/app/actions/electricity";
 import { recordReminderSent } from "@/app/actions/reminders";
 import { buildDuesMessage, type Signature } from "@/lib/messages";
 import { waLink, mailtoLink } from "@/lib/messaging";
@@ -16,6 +17,7 @@ import { useManager } from "@/lib/manager-context";
 import { toast } from "sonner";
 
 type TenantDues = Awaited<ReturnType<typeof getTenantDues>>;
+type OpenReading = Awaited<ReturnType<typeof getOpenReadingForRoom>>;
 
 /**
  * The one place a dues reminder gets composed and sent.
@@ -31,6 +33,7 @@ export function SendDuesReminderDialog({
   tenantId,
   tenantName,
   roomLabel,
+  roomId,
   phone,
   email,
   signature,
@@ -41,6 +44,8 @@ export function SendDuesReminderDialog({
   tenantId: string;
   tenantName: string;
   roomLabel?: string | null;
+  /** When set, offers closing out the room's in-progress meter reading right here. */
+  roomId?: string | null;
   phone?: string | null;
   email?: string | null;
   signature: Signature;
@@ -51,6 +56,9 @@ export function SendDuesReminderDialog({
   const [extraDescription, setExtraDescription] = useState("");
   const [extraAmount, setExtraAmount] = useState("");
   const [addingExtra, setAddingExtra] = useState(false);
+  const [openReading, setOpenReading] = useState<OpenReading>(null);
+  const [endReadingInput, setEndReadingInput] = useState("");
+  const [closingReading, setClosingReading] = useState(false);
 
   // Reset the form the moment the dialog opens. Adjusted during render, from
   // a prop change, rather than in an effect, which is reserved below for the
@@ -62,6 +70,8 @@ export function SendDuesReminderDialog({
       setDues(null);
       setExtraDescription("");
       setExtraAmount("");
+      setOpenReading(null);
+      setEndReadingInput("");
     }
   }
 
@@ -78,10 +88,34 @@ export function SendDuesReminderDialog({
     getTenantDues(tenantId).then((result) => {
       if (active) setDues(result);
     });
+    if (roomId) {
+      getOpenReadingForRoom(roomId).then((result) => {
+        if (active) setOpenReading(result);
+      });
+    }
     return () => {
       active = false;
     };
-  }, [open, tenantId]);
+  }, [open, tenantId, roomId]);
+
+  async function closeReading() {
+    if (!openReading) return;
+    const endReading = Number(endReadingInput);
+    if (!(endReading >= Number(openReading.startReading))) {
+      return toast.error("The current reading must be at least the starting reading.");
+    }
+
+    setClosingReading(true);
+    const result = await closeElectricityReading(manager, openReading.id, endReading, todayISO());
+    setClosingReading(false);
+
+    if (!result) return toast.error("Couldn't close that reading.");
+
+    setOpenReading(null);
+    setEndReadingInput("");
+    await refresh();
+    toast.success(`Electricity charge added: ${result.units} units`);
+  }
 
   async function addExtra() {
     const amount = Number(extraAmount);
@@ -147,6 +181,30 @@ export function SendDuesReminderDialog({
             <div className="flex items-center justify-between border-t border-border/70 pt-2 text-sm font-semibold">
               <span>Total</span>
               <span className="tabular">{inr(dues.summary.total.outstanding)}</span>
+            </div>
+          </div>
+        )}
+
+        {openReading && (
+          <div className="space-y-2 rounded-xl border border-border bg-muted/30 p-3">
+            <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+              <Zap className="h-3.5 w-3.5" /> Close out the meter reading
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Started at {Number(openReading.startReading)} on {new Date(openReading.startDate).toLocaleDateString("en-IN")}.
+              Enter the current number to bill this room&apos;s electricity and fold it into the reminder below.
+            </p>
+            <div className="flex gap-2">
+              <Input
+                type="number"
+                placeholder="Current reading"
+                value={endReadingInput}
+                onChange={(e) => setEndReadingInput(e.target.value)}
+                className="flex-1"
+              />
+              <Button size="sm" variant="secondary" onClick={closeReading} disabled={closingReading || !endReadingInput}>
+                Add charge
+              </Button>
             </div>
           </div>
         )}

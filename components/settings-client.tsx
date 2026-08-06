@@ -36,7 +36,6 @@ export function SettingsClient({ pgInfo, activity }: { pgInfo: PgInfoModel; acti
       totalBeds: pg.totalBeds,
       paymentLink: pg.paymentLink,
       electricityRatePerUnit: rate,
-      rentDueDay: pg.rentDueDay,
       dueSoonDays: pg.dueSoonDays,
       defaultSplitMode: pg.defaultSplitMode,
     });
@@ -145,38 +144,27 @@ export function SettingsClient({ pgInfo, activity }: { pgInfo: PgInfoModel; acti
       <Panel className="space-y-3">
         <div>
           <p className="font-display text-base font-semibold tracking-tight">Rent &amp; billing</p>
-          <p className="text-xs text-muted-foreground">How rent is raised, split, and chased.</p>
+          <p className="text-xs text-muted-foreground">
+            Rent is billed automatically each month on the day a tenant joined on. How it&apos;s split and chased:
+          </p>
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <Label className="mb-1.5">Rent due on day</Label>
-            <Input
-              type="number"
-              min={1}
-              max={31}
-              value={pg.rentDueDay}
-              onChange={(e) => setPg({ ...pg, rentDueDay: Math.min(31, Math.max(1, Number(e.target.value))) })}
-            />
-            <p className="mt-1 text-xs text-muted-foreground">Clamped to the last day in short months.</p>
-          </div>
-          <div>
-            <Label className="mb-1.5">&ldquo;Due soon&rdquo; window</Label>
-            <Select
-              value={String(pg.dueSoonDays)}
-              onValueChange={(v) => v && setPg({ ...pg, dueSoonDays: Number(v) })}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="7">7 days</SelectItem>
-                <SelectItem value="14">14 days</SelectItem>
-                <SelectItem value="30">30 days</SelectItem>
-                <SelectItem value="60">60 days</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="mt-1 text-xs text-muted-foreground">Drives the dashboard counter.</p>
-          </div>
+        <div>
+          <Label className="mb-1.5">&ldquo;Due soon&rdquo; window</Label>
+          <Select
+            value={String(pg.dueSoonDays)}
+            onValueChange={(v) => v && setPg({ ...pg, dueSoonDays: Number(v) })}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="7">7 days</SelectItem>
+              <SelectItem value="14">14 days</SelectItem>
+              <SelectItem value="30">30 days</SelectItem>
+              <SelectItem value="60">60 days</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="mt-1 text-xs text-muted-foreground">Drives the dashboard counter.</p>
         </div>
         <div>
           <Label className="mb-1.5">Default rent split for shared rooms</Label>

@@ -10,15 +10,19 @@ import { TenantFormDialog } from "@/components/tenant-form-dialog";
 import { Amount, EmptyState, PageTitle } from "@/components/khata";
 import { inr, initials } from "@/lib/format";
 import type { TenantModel } from "@/lib/generated/prisma/models";
+import type { listRoomOptions } from "@/app/actions/rooms";
 
 type TenantRow = TenantModel & { room: { number: string; floor: { name: string } } | null };
+type RoomOption = Awaited<ReturnType<typeof listRoomOptions>>[number];
 
 export function TenantsClient({
   tenants,
   outstandingByTenant,
+  roomOptions,
 }: {
   tenants: TenantRow[];
   outstandingByTenant: Record<string, { amount: number; overdue: boolean }>;
+  roomOptions: RoomOption[];
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"ACTIVE" | "VACATED" | "ALL">("ACTIVE");
@@ -118,7 +122,7 @@ export function TenantsClient({
         })}
       </div>
 
-      <TenantFormDialog open={formOpen} onOpenChange={setFormOpen} />
+      <TenantFormDialog open={formOpen} onOpenChange={setFormOpen} roomOptions={roomOptions} />
     </div>
   );
 }

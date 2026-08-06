@@ -17,20 +17,25 @@ import {
 import { PhotoUpload } from "@/components/photo-upload";
 import { useManager } from "@/lib/manager-context";
 import { createTenant, updateTenant, type TenantInput, type AgreementInput } from "@/app/actions/tenants";
-import { todayISO } from "@/lib/format";
+import { todayISO, inr } from "@/lib/format";
 import { Plus, X } from "lucide-react";
 import { toast } from "sonner";
+import type { listRoomOptions } from "@/app/actions/rooms";
 
 type ExistingTenant = Partial<TenantInput> & { id?: string };
+type RoomOption = Awaited<ReturnType<typeof listRoomOptions>>[number];
 
 export function TenantFormDialog({
   open,
   onOpenChange,
   initial,
+  roomOptions = [],
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initial?: ExistingTenant | null;
+  /** Rooms with a bed free, for the onboarding-only room/bed picker. */
+  roomOptions?: RoomOption[];
 }) {
   const router = useRouter();
   const { manager } = useManager();
@@ -79,6 +84,43 @@ export function TenantFormDialog({
 
   const [saving, setSaving] = useState(false);
 
+  // Onboarding-only bed picker. Room assignment after onboarding still goes
+  // through the Rooms page; this just saves a trip for the common case of
+  // "this tenant has a bed from day one".
+  const [pickedRoomId, setPickedRoomId] = useState<string | null>(null);
+  const [pickedBed, setPickedBed] = useState<string | null>(null);
+  const [meterStartReading, setMeterStartReading] = useState("");
+  const [meterStartPhotoUrl, setMeterStartPhotoUrl] = useState("");
+  const pickedRoom = roomOptions.find((r) => r.id === pickedRoomId) ?? null;
+  const availableBeds = pickedRoom
+    ? Array.from({ length: pickedRoom.capacity }, (_, i) => String(i + 1)).filter(
+        (bed) => !pickedRoom.takenBeds.includes(bed)
+      )
+    : [];
+
+  function pickRoom(roomId: string | null) {
+    if (!roomId) {
+      setPickedRoomId(null);
+      setPickedBed(null);
+      return;
+    }
+    const room = roomOptions.find((r) => r.id === roomId) ?? null;
+    setPickedRoomId(roomId);
+    const firstFreeBed = room
+      ? Array.from({ length: room.capacity }, (_, i) => String(i + 1)).find((b) => !room.takenBeds.includes(b))
+      : undefined;
+    setPickedBed(firstFreeBed ?? null);
+    if (room) {
+      setF((s) => ({
+        ...s,
+        roomNumber: room.number,
+        bedNumber: firstFreeBed ?? "",
+        // CUSTOM-mode rooms don't set anyone's rent, so leave whatever's typed.
+        rentAmount: room.splitModeResolved === "CUSTOM" ? s.rentAmount : room.perBedIfJoining,
+      }));
+    }
+  }
+
   function set<K extends keyof TenantInput>(key: K, value: TenantInput[K]) {
     setF((s) => ({ ...s, [key]: value }));
   }
@@ -104,8 +146,17 @@ export function TenantFormDialog({
     setSaving(true);
     try {
       if (isNew) {
-        await createTenant(manager, f, { ...agreement, roomNumber: f.roomNumber, rentAmount: f.rentAmount, depositAmount: f.depositAmount });
-        toast.success("Tenant onboarded");
+        await createTenant(
+          manager,
+          {
+            ...f,
+            roomId: pickedRoomId ?? undefined,
+            meterStartReading: meterStartReading !== "" ? Number(meterStartReading) : undefined,
+            meterStartPhotoUrl: meterStartPhotoUrl || undefined,
+          },
+          { ...agreement, roomNumber: f.roomNumber, rentAmount: f.rentAmount, depositAmount: f.depositAmount }
+        );
+        toast.success(pickedRoom ? `Tenant onboarded into ${pickedRoom.label}` : "Tenant onboarded");
       } else {
         await updateTenant(manager, initial!.id!, f);
         toast.success("Tenant updated");
@@ -151,13 +202,89 @@ export function TenantFormDialog({
           </div>
 
           <p className="text-xs font-bold uppercase tracking-wide text-amber-700">Room & rent</p>
+
+          {isNew && roomOptions.length > 0 && (
+            <div className="rounded-xl border border-border bg-muted/30 p-3">
+              <Label className="mb-1.5">Bed (optional, assign later from Rooms if you&apos;d rather)</Label>
+              <Select
+                value={pickedRoomId ?? "none"}
+                onValueChange={(v) => pickRoom(v && v !== "none" ? v : null)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No room yet</SelectItem>
+                  {roomOptions.map((r) => (
+                    <SelectItem key={r.id} value={r.id} disabled={r.occupied >= r.capacity}>
+                      {r.label} ({r.capacity - r.occupied} bed{r.capacity - r.occupied === 1 ? "" : "s"} free)
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {pickedRoom && (
+                <div className="mt-3">
+                  <Label className="mb-1.5">Which bed?</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {availableBeds.map((bed) => (
+                      <button
+                        key={bed}
+                        type="button"
+                        onClick={() => {
+                          setPickedBed(bed);
+                          set("bedNumber", bed);
+                        }}
+                        className={`rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors ${
+                          pickedBed === bed
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "text-muted-foreground hover:bg-muted"
+                        }`}
+                      >
+                        Bed {bed}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {pickedRoom.splitModeResolved === "CUSTOM"
+                      ? "This room uses each tenant's own rent, set it below."
+                      : `Rent set to ${inr(pickedRoom.perBedIfJoining)}, this room's share.`}
+                  </p>
+                </div>
+              )}
+
+              {pickedRoom && !pickedRoom.hasMeterReading && (
+                <div className="mt-3 border-t border-border/70 pt-3">
+                  <Label className="mb-1.5">Starting meter reading</Label>
+                  <p className="mb-2 text-xs text-muted-foreground">
+                    This room has no reading on file yet. Capture the current number and a photo as proof, so the
+                    first electricity bill has a real starting point.
+                  </p>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <Input
+                      type="number"
+                      placeholder="Meter reading"
+                      value={meterStartReading}
+                      onChange={(e) => setMeterStartReading(e.target.value)}
+                    />
+                    <PhotoUpload value={meterStartPhotoUrl} onChange={setMeterStartPhotoUrl} label="Meter photo" />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Room number">
-              <Input value={f.roomNumber} onChange={(e) => set("roomNumber", e.target.value)} />
-            </Field>
-            <Field label="Bed number">
-              <Input value={f.bedNumber} onChange={(e) => set("bedNumber", e.target.value)} />
-            </Field>
+            {(!isNew || roomOptions.length === 0 || !pickedRoomId) && (
+              <>
+                <Field label="Room number">
+                  <Input value={f.roomNumber} onChange={(e) => set("roomNumber", e.target.value)} />
+                </Field>
+                <Field label="Bed number">
+                  <Input value={f.bedNumber} onChange={(e) => set("bedNumber", e.target.value)} />
+                </Field>
+              </>
+            )}
             <Field label="Monthly rent" required>
               <Input type="number" value={f.rentAmount} onChange={(e) => set("rentAmount", Number(e.target.value))} />
             </Field>

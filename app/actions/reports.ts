@@ -183,14 +183,17 @@ export async function exportAllData() {
     ),
     "electricity.csv": toCsv(
       bills.map((b) => ({
+        status: b.endDate ? "closed" : "open",
         startDate: b.startDate,
-        endDate: b.endDate,
+        // Blank rather than num()'d to 0: an open reading genuinely has no
+        // end value yet, which reads very differently from "zero units".
+        endDate: b.endDate ?? "",
         meter: b.isMainMeter ? "Main meter" : b.room ? `Room ${b.room.number}` : (b.tenant?.name ?? ""),
         startReading: num(b.startReading),
-        endReading: num(b.endReading),
-        units: num(b.units),
+        endReading: b.endReading !== null ? num(b.endReading) : "",
+        units: b.units !== null ? num(b.units) : "",
         ratePerUnit: num(b.ratePerUnit),
-        amount: num(b.amount),
+        amount: b.amount !== null ? num(b.amount) : "",
       }))
     ),
     "expenses.csv": toCsv(

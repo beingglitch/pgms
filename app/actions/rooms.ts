@@ -32,8 +32,10 @@ export async function getBuilding() {
               orderBy: { name: "asc" },
               select: { id: true, name: true, photoUrl: true, bedNumber: true, rentOverride: true, rentAmount: true },
             },
-            // Latest reading only, since it seeds the next reading's start value.
-            meterReadings: { orderBy: { endDate: "desc" }, take: 1 },
+            // A handful of recent readings, enough to find both the latest
+            // closed one (seeds the next reading's start value) and any
+            // currently open one (started but not yet closed out).
+            meterReadings: { orderBy: { createdAt: "desc" }, take: 5 },
           },
         },
       },
@@ -71,6 +73,8 @@ export async function getBuilding() {
         ),
         beds,
         occupied: room.tenants.length,
+        lastClosedReading: room.meterReadings.find((r) => r.endDate !== null) ?? null,
+        openReading: room.meterReadings.find((r) => r.endDate === null) ?? null,
       };
     }),
   }));
@@ -87,23 +91,44 @@ export async function getBuilding() {
   };
 }
 
+/**
+ * Rooms for the onboarding picker: enough to show remaining beds, compute
+ * what this room would charge a new tenant, and know whether it already has
+ * a meter reading on file (so onboarding only asks for a starting one when
+ * there isn't one yet).
+ */
 export async function listRoomOptions() {
-  const rooms = await prisma.room.findMany({
-    orderBy: [{ floor: { order: "asc" } }, { number: "asc" }],
-    include: {
-      floor: { select: { name: true } },
-      tenants: { where: { status: "ACTIVE" }, select: { id: true, bedNumber: true } },
-    },
-  });
+  const [rooms, pgInfo] = await Promise.all([
+    prisma.room.findMany({
+      orderBy: [{ floor: { order: "asc" } }, { number: "asc" }],
+      include: {
+        floor: { select: { name: true, splitMode: true } },
+        tenants: { where: { status: "ACTIVE" }, select: { id: true, bedNumber: true } },
+        meterReadings: { select: { id: true }, take: 1 },
+      },
+    }),
+    getPgInfo(),
+  ]);
 
-  return rooms.map((room) => ({
-    id: room.id,
-    label: `${room.floor.name} · Room ${room.number}`,
-    number: room.number,
-    capacity: room.capacity,
-    occupied: room.tenants.length,
-    takenBeds: room.tenants.map((t) => t.bedNumber).filter(Boolean) as string[],
-  }));
+  return rooms.map((room) => {
+    const occupied = room.tenants.length;
+    const splitModeResolved = resolveSplitMode({ ...room, floor: room.floor }, pgInfo.defaultSplitMode);
+    return {
+      id: room.id,
+      label: `${room.floor.name} · Room ${room.number}`,
+      number: room.number,
+      capacity: room.capacity,
+      rentAmount: Number(room.rentAmount),
+      splitModeResolved,
+      occupied,
+      // The share a tenant joining right now would pay, factoring themselves
+      // into the occupant count for BY_OCCUPANTS rooms. Meaningless (and 0)
+      // under CUSTOM, where the room's rent doesn't apply to anyone in it.
+      perBedIfJoining: splitModeResolved === "CUSTOM" ? 0 : rentShare({ ...room, floor: room.floor }, occupied + 1, pgInfo.defaultSplitMode),
+      takenBeds: room.tenants.map((t) => t.bedNumber).filter(Boolean) as string[],
+      hasMeterReading: room.meterReadings.length > 0,
+    };
+  });
 }
 
 export async function createFloor(actor: string, input: { name: string; order: number; splitMode?: SplitMode | null }) {

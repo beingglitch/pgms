@@ -74,8 +74,6 @@ model PgInfo {
   ownerName              String  @default("Owner")
   electricityRatePerUnit Decimal @db.Decimal(10, 2) @default(8)
 
-  /// Rent is raised on this day of each month.
-  rentDueDay       Int       @default(5)
   /// Window the dashboard "due soon" counter looks ahead by.
   dueSoonDays      Int       @default(7)
   /// Fallback split for rooms and floors that don't override it.
@@ -202,6 +200,10 @@ model Charge {
 
   allocations Allocation[]
 
+  /// Makes double-billing the same tenant for the same cycle impossible at
+  /// the database level; the generator relies on this via skipDuplicates
+  /// instead of racily querying-then-filtering in application code.
+  @@unique([tenantId, period, type])
   @@index([tenantId, period])
   @@index([dueDate])
   @@index([type])
@@ -275,15 +277,23 @@ model ElectricityBill {
   tenantId     String?
   isMainMeter  Boolean  @default(false)
   startReading Decimal  @db.Decimal(10, 2)
-  endReading   Decimal  @db.Decimal(10, 2)
   startDate    DateTime
-  endDate      DateTime
-  units        Decimal  @db.Decimal(10, 2)
+  /// Rate at the moment the reading was opened. Fixed at that point rather
+  /// than re-read when closed, so the total matches whatever was implied
+  /// when the reading (and its proof photo) was first captured.
   ratePerUnit  Decimal  @db.Decimal(10, 2)
-  amount       Decimal  @db.Decimal(10, 2)
   photoUrl     String?
-  recordedBy   String?
-  createdAt    DateTime @default(now())
+  /// Null means this reading is open: started (with a starting number and a
+  /// proof photo, typically captured at onboarding), but not yet closed out
+  /// with a current number. Every place that reports totals or seeds the
+  /// next reading's starting value must exclude open rows explicitly —
+  /// they're not "zero units", they're "not billed yet".
+  endReading Decimal?  @db.Decimal(10, 2)
+  endDate    DateTime?
+  units      Decimal?  @db.Decimal(10, 2)
+  amount     Decimal?  @db.Decimal(10, 2)
+  recordedBy String?
+  createdAt  DateTime  @default(now())
 
   charges  Charge[]
   expenses Expense[]

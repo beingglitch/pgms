@@ -201,16 +201,47 @@ export function periodOf(date: Date | string) {
 }
 
 /**
- * The date rent falls due in a given period, clamped to short months.
+ * Add n calendar months to a date, anchored to its day-of-month and clamped
+ * to the target month's last day when it doesn't have that many days.
  *
- * Built at UTC midnight: a due date is a calendar date, and constructing it in
- * server-local time makes it land on the previous day once the server and the
- * property are in different zones.
+ * Built at UTC midnight for the same reason the old dueDateFor was: a rent
+ * due date is a calendar date, and computing it in server-local time can
+ * land it on the wrong day once server and property are in different zones.
+ * This also avoids the native `Date.setMonth` rollover bug: Jan 31 plus one
+ * month becomes "Mar 3" via setMonth (Feb only has 28 days), not Feb 28.
  */
-export function dueDateFor(period: string, rentDueDay: number) {
-  const [year, month] = period.split("-").map(Number);
-  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  return new Date(Date.UTC(year, month - 1, Math.min(Math.max(rentDueDay, 1), lastDay)));
+export function addCalendarMonths(date: Date | string, n: number): Date {
+  const d = new Date(date);
+  const day = d.getUTCDate();
+  const targetFirst = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1));
+  const lastDayOfTarget = new Date(Date.UTC(targetFirst.getUTCFullYear(), targetFirst.getUTCMonth() + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(targetFirst.getUTCFullYear(), targetFirst.getUTCMonth(), Math.min(day, lastDayOfTarget)));
+}
+
+/**
+ * Every monthly rent cycle for a tenant that has started on or before `asOf`
+ * and doesn't already have a charge, oldest first.
+ *
+ * Cycle 0 starts on joinDate itself (rent is paid in advance, the same day
+ * you move in), and cycle N starts N months later, on the same day-of-month
+ * the tenant joined on. A tenant who joined the 5th is always due the 5th,
+ * regardless of what day anyone else in the building joined on.
+ */
+export function pendingRentCycles(
+  joinDate: Date | string,
+  asOf: Date,
+  alreadyBilledPeriods: Set<string>
+): { start: Date; period: string }[] {
+  const cycles: { start: Date; period: string }[] = [];
+  // 600 months (50 years) is a defensive cap, not a real limit; nothing
+  // reasonable should ever get close to it.
+  for (let n = 0; n < 600; n++) {
+    const start = addCalendarMonths(joinDate, n);
+    if (start > asOf) break;
+    const period = periodOf(start);
+    if (!alreadyBilledPeriods.has(period)) cycles.push({ start, period });
+  }
+  return cycles;
 }
 
 export const CHARGE_TYPE_LABELS: Record<ChargeType, string> = {

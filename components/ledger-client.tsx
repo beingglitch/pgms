@@ -8,14 +8,15 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { BookOpen, MessageCircle, Plus, Receipt, Search, Sparkles, X } from "lucide-react";
+import { BookOpen, IndianRupee, MessageCircle, Plus, Receipt, Search, Sparkles, X } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { LedgerFormDialog } from "@/components/ledger-form-dialog";
 import { ChargeFormDialog } from "@/components/charge-form-dialog";
 import { ReceiptDialog } from "@/components/receipt-dialog";
 import { SendDuesReminderDialog } from "@/components/send-dues-reminder-dialog";
 import { Amount, EmptyState, KhataRow, PageTitle, Panel, StatTile } from "@/components/khata";
 import { deleteLedgerEntry, listLedger } from "@/app/actions/ledger";
-import { generateRentCharges, listOutstandingByTenant, waiveCharge } from "@/app/actions/charges";
+import { listOutstandingByTenant, waiveCharge } from "@/app/actions/charges";
 import { chargeOutstanding, chargePaid, CHARGE_TYPE_LABELS, num } from "@/lib/charges";
 import { type Signature } from "@/lib/messages";
 import { useManager } from "@/lib/manager-context";
@@ -48,22 +49,10 @@ export function LedgerClient({
   const [chargeFor, setChargeFor] = useState<DueRow | null>(null);
   const [receipt, setReceipt] = useState<Entry | null>(null);
   const [remindTarget, setRemindTarget] = useState<DueRow | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [payTarget, setPayTarget] = useState<DueRow | null>(null);
 
   const totalOutstanding = dues.reduce((s, d) => s + d.summary.total.outstanding, 0);
   const overdueTotal = dues.reduce((s, d) => s + d.summary.overdue, 0);
-
-  async function raiseRent() {
-    setBusy(true);
-    const result = await generateRentCharges(manager);
-    setBusy(false);
-    toast.success(
-      result.created > 0
-        ? `Rent raised for ${result.created} tenant${result.created === 1 ? "" : "s"}`
-        : "Everyone already has this month's rent"
-    );
-    router.refresh();
-  }
 
   return (
     <div className="space-y-4">
@@ -107,18 +96,6 @@ export function LedgerClient({
             />
           </div>
 
-          <Panel className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold">Raise this month&apos;s rent</p>
-              <p className="text-xs text-muted-foreground">
-                Bills every active tenant using their room split. Running it twice won&apos;t double-charge anyone.
-              </p>
-            </div>
-            <Button size="sm" variant="secondary" onClick={raiseRent} disabled={busy}>
-              <Sparkles className="h-4 w-4" /> Raise rent
-            </Button>
-          </Panel>
-
           {dues.length === 0 ? (
             <EmptyState icon={Sparkles} title="Nobody owes anything">
               Every charge raised so far has been paid in full.
@@ -132,6 +109,7 @@ export function LedgerClient({
                   manager={manager}
                   onAddCharge={() => setChargeFor(row)}
                   onRemind={() => setRemindTarget(row)}
+                  onPay={() => setPayTarget(row)}
                   onChanged={() => router.refresh()}
                 />
               ))}
@@ -141,6 +119,20 @@ export function LedgerClient({
       </Tabs>
 
       <LedgerFormDialog open={payOpen} onOpenChange={setPayOpen} tenants={tenants as never} />
+      {payTarget && (
+        <LedgerFormDialog
+          open={!!payTarget}
+          onOpenChange={(o) => {
+            if (!o) {
+              setPayTarget(null);
+              router.refresh();
+            }
+          }}
+          tenants={tenants as never}
+          fixedTenantId={payTarget.tenant.id}
+          outstandingAmount={payTarget.summary.total.outstanding}
+        />
+      )}
       {chargeFor && (
         <ChargeFormDialog
           open={!!chargeFor}
@@ -162,6 +154,7 @@ export function LedgerClient({
           tenantId={remindTarget.tenant.id}
           tenantName={remindTarget.tenant.name}
           roomLabel={remindTarget.tenant.room ? `Room ${remindTarget.tenant.room.number}` : remindTarget.tenant.roomNumber}
+          roomId={remindTarget.tenant.room?.id}
           phone={remindTarget.tenant.phone}
           email={remindTarget.tenant.email}
           signature={signature}
@@ -187,15 +180,27 @@ function PaymentsTab({
   const [month, setMonth] = useState("all");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [tenantFilter, setTenantFilter] = useState("all");
 
   const months = useMemo(
     () => Array.from(new Set(entries.map((e) => monthKey(e.date)))).sort().reverse(),
     [entries]
   );
 
+  // Only tenants who actually have entries, so the picker isn't cluttered
+  // with everyone who's never paid anything yet.
+  const tenantOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const e of entries) {
+      if (e.tenant && !seen.has(e.tenant.id)) seen.set(e.tenant.id, e.tenant.name);
+    }
+    return Array.from(seen, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [entries]);
+
   const list = useMemo(() => {
     const q = query.trim().toLowerCase();
     return entries.filter((e) => {
+      if (tenantFilter !== "all" && e.tenant?.id !== tenantFilter) return false;
       if (month !== "all" && monthKey(e.date) !== month) return false;
       const day = new Date(e.date).toISOString().slice(0, 10);
       if (from && day < from) return false;
@@ -208,13 +213,13 @@ function PaymentsTab({
         e.type.toLowerCase().includes(q)
       );
     });
-  }, [entries, query, month, from, to]);
+  }, [entries, query, month, from, to, tenantFilter]);
 
   // Deposits are held, not earned, so they're totalled separately.
   const collected = list.filter((e) => e.type === "RENT" || e.type === "OTHER").reduce((s, e) => s + num(e.amount), 0);
   const deposits = list.filter((e) => e.type === "DEPOSIT").reduce((s, e) => s + num(e.amount), 0);
   const refunds = list.filter((e) => e.type === "REFUND").reduce((s, e) => s + num(e.amount), 0);
-  const filtered = query || month !== "all" || from || to;
+  const filtered = query || month !== "all" || from || to || tenantFilter !== "all";
 
   async function remove(id: string) {
     await deleteLedgerEntry(manager, id);
@@ -235,6 +240,19 @@ function PaymentsTab({
           />
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Select value={tenantFilter} onValueChange={(v) => v && setTenantFilter(v)}>
+            <SelectTrigger className="w-auto flex-1 text-xs">
+              <SelectValue placeholder="All tenants" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All tenants</SelectItem>
+              {tenantOptions.map((t) => (
+                <SelectItem key={t.id} value={t.id}>
+                  {t.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-auto flex-1 text-xs" />
           <span className="text-xs text-muted-foreground">to</span>
           <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-auto flex-1 text-xs" />
@@ -247,6 +265,7 @@ function PaymentsTab({
                 setMonth("all");
                 setFrom("");
                 setTo("");
+                setTenantFilter("all");
               }}
             >
               <X className="h-3.5 w-3.5" /> Clear
@@ -347,12 +366,14 @@ function DueCard({
   manager,
   onAddCharge,
   onRemind,
+  onPay,
   onChanged,
 }: {
   row: DueRow;
   manager: string;
   onAddCharge: () => void;
   onRemind: () => void;
+  onPay: () => void;
   onChanged: () => void;
 }) {
   const { tenant, summary } = row;
@@ -427,6 +448,9 @@ function DueCard({
       </div>
 
       <div className="mt-3 flex flex-wrap gap-2 border-t border-border/70 pt-3">
+        <Button size="sm" onClick={onPay}>
+          <IndianRupee className="h-3.5 w-3.5" /> Paid
+        </Button>
         <Button size="sm" variant="secondary" onClick={onRemind}>
           <MessageCircle className="h-3.5 w-3.5" /> Send reminder
         </Button>
