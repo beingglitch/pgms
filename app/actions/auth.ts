@@ -9,6 +9,7 @@ import {
   createSessionToken,
   hashPassword,
   verifyPassword,
+  verifyRecoveryCode,
   verifySessionToken,
 } from "@/lib/auth";
 import { logActivity } from "./activity";
@@ -85,4 +86,23 @@ export async function changePassword(actor: string, current: string, next: strin
   });
   await logActivity(actor, "Password changed", "");
   return { ok: true };
+}
+
+/// The forgot-password path: no current password needed, just the recovery
+/// code set on the hosting side (DEVELOPER_RECOVERY_CODE). Everyday password
+/// changes should still go through Settings; this is only for lockouts.
+export async function resetPasswordWithCode(code: string, next: string) {
+  if (!process.env.DEVELOPER_RECOVERY_CODE) {
+    return { error: "Password recovery isn't set up for this property." };
+  }
+  if (next.length < 8) return { error: "Use at least 8 characters." };
+  if (!verifyRecoveryCode(code)) return { error: "Incorrect recovery code." };
+
+  await prisma.pgInfo.update({
+    where: { id: "singleton" },
+    data: { passwordHash: hashPassword(next) },
+  });
+  await startSession();
+  await logActivity("Recovery code", "Password reset", "Reset via developer recovery code");
+  redirect("/");
 }

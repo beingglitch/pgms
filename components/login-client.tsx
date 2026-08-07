@@ -4,8 +4,8 @@ import { useState, useTransition } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { createPassword, signIn } from "@/app/actions/auth";
-import { Lock, ShieldCheck } from "lucide-react";
+import { createPassword, signIn, resetPasswordWithCode } from "@/app/actions/auth";
+import { Lock, ShieldCheck, KeyRound } from "lucide-react";
 
 export function LoginClient({
   pgName,
@@ -20,25 +20,41 @@ export function LoginClient({
   needsSetup: boolean;
   next?: string;
 }) {
+  const [mode, setMode] = useState<"signin" | "recover">("signin");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [recoveryCode, setRecoveryCode] = useState("");
   const [error, setError] = useState("");
   const [pending, startTransition] = useTransition();
+
+  const recovering = mode === "recover" && !needsSetup;
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
 
-    if (needsSetup && password !== confirm) {
+    if ((needsSetup || recovering) && password !== confirm) {
       setError("The two passwords don't match.");
       return;
     }
 
     startTransition(async () => {
-      // On success these redirect, so only failures come back with a result.
-      const result = needsSetup ? await createPassword(password) : await signIn(password, next);
+      // On success these all redirect, so only failures come back with a result.
+      const result = recovering
+        ? await resetPasswordWithCode(recoveryCode, password)
+        : needsSetup
+          ? await createPassword(password)
+          : await signIn(password, next);
       if (result?.error) setError(result.error);
     });
+  }
+
+  function toggleMode() {
+    setMode((m) => (m === "signin" ? "recover" : "signin"));
+    setPassword("");
+    setConfirm("");
+    setRecoveryCode("");
+    setError("");
   }
 
   return (
@@ -55,27 +71,47 @@ export function LoginClient({
           )}
           <h1 className="font-display text-2xl font-semibold tracking-tight">{pgName}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {needsSetup ? "Set a password to protect your records" : "Sign in to continue"}
+            {needsSetup
+              ? "Set a password to protect your records"
+              : recovering
+                ? "Reset your password with a recovery code"
+                : "Sign in to continue"}
           </p>
         </div>
 
         <form onSubmit={submit} className="space-y-4 rounded-2xl border bg-background p-6 shadow-card">
+          {recovering && (
+            <div>
+              <Label className="mb-1.5" htmlFor="recovery-code">
+                Recovery code
+              </Label>
+              <Input
+                id="recovery-code"
+                autoFocus
+                autoComplete="off"
+                value={recoveryCode}
+                onChange={(e) => setRecoveryCode(e.target.value)}
+                placeholder="From whoever manages the hosting"
+              />
+            </div>
+          )}
+
           <div>
             <Label className="mb-1.5" htmlFor="password">
-              {needsSetup ? "New password" : "Password"}
+              {needsSetup || recovering ? "New password" : "Password"}
             </Label>
             <Input
               id="password"
               type="password"
-              autoFocus
-              autoComplete={needsSetup ? "new-password" : "current-password"}
+              autoFocus={!recovering}
+              autoComplete={needsSetup || recovering ? "new-password" : "current-password"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
             />
           </div>
 
-          {needsSetup && (
+          {(needsSetup || recovering) && (
             <div>
               <Label className="mb-1.5" htmlFor="confirm">
                 Confirm password
@@ -96,8 +132,14 @@ export function LoginClient({
           )}
 
           <Button type="submit" className="w-full" disabled={pending || password.length === 0}>
-            <Lock className="h-4 w-4" />
-            {pending ? "Please wait…" : needsSetup ? "Set password & continue" : "Sign in"}
+            {recovering ? <KeyRound className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
+            {pending
+              ? "Please wait…"
+              : recovering
+                ? "Reset password & sign in"
+                : needsSetup
+                  ? "Set password & continue"
+                  : "Sign in"}
           </Button>
 
           {needsSetup && (
@@ -106,6 +148,16 @@ export function LoginClient({
               Your tenants&apos; ID documents and contact details are stored here. Choose something you don&apos;t use
               elsewhere, at least 8 characters.
             </p>
+          )}
+
+          {!needsSetup && (
+            <button
+              type="button"
+              onClick={toggleMode}
+              className="w-full text-center text-xs font-semibold text-muted-foreground hover:text-foreground"
+            >
+              {recovering ? "Back to sign in" : "Forgot password?"}
+            </button>
           )}
         </form>
       </div>

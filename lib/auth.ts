@@ -46,3 +46,14 @@ export function verifySessionToken(token: string | undefined | null) {
   if (!safeEqual(signature, sign(expiry))) return false;
   return Number(expiry) > Date.now();
 }
+
+/// A separate escape hatch from the password itself: whoever manages the
+/// hosting (Vercel project settings) sets DEVELOPER_RECOVERY_CODE, and can
+/// hand it to the owner to reset a forgotten password without needing the
+/// old one. Unset by default, so recovery is opt-in rather than a standing
+/// backdoor on every deployment.
+export function verifyRecoveryCode(code: string) {
+  const configured = process.env.DEVELOPER_RECOVERY_CODE;
+  if (!configured) return false;
+  return safeEqual(code, configured);
+}
