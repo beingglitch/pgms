@@ -28,6 +28,7 @@ export function ExpensesClient({ expenses }: { expenses: ExpenseModel[] }) {
   const oneTimeThisMonth = expenses
     .filter((e) => e.frequency === "ONE_TIME" && monthKey(e.date) === thisMonth)
     .reduce((s, e) => s + Number(e.amount), 0);
+  const total = round2(expenses.reduce((s, e) => s + Number(e.amount), 0));
 
   async function handleToggle(id: string, active: boolean) {
     await toggleExpenseActive(manager, id, active);
@@ -54,6 +55,7 @@ export function ExpensesClient({ expenses }: { expenses: ExpenseModel[] }) {
       <div className="mb-4 grid grid-cols-2 gap-3">
         <StatTile label="Monthly recurring" value={inr(monthlyTotal)} />
         <StatTile label="One-time this month" value={inr(oneTimeThisMonth)} />
+        <StatTile label="Total, all time" value={inr(total)} className="col-span-2" />
       </div>
 
       {recurring.length > 0 && (

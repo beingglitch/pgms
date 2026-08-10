@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { addManualCharge } from "@/app/actions/charges";
+import { recordElectricityCharge } from "@/app/actions/electricity";
+import { useElectricityFields, ElectricityReadingFields } from "@/components/electricity-fields";
 import { useManager } from "@/lib/manager-context";
 import { todayISO } from "@/lib/format";
 import { toast } from "sonner";
@@ -24,11 +26,14 @@ export function ChargeFormDialog({
   onOpenChange,
   tenantId,
   tenantName,
+  roomId,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   tenantId: string;
   tenantName: string;
+  /** Lets an "Electricity" option connect to the room's meter instead of being a flat manual amount. */
+  roomId?: string | null;
 }) {
   const router = useRouter();
   const { manager } = useManager();
@@ -38,7 +43,42 @@ export function ChargeFormDialog({
   const [dueDate, setDueDate] = useState(todayISO());
   const [busy, setBusy] = useState(false);
 
+  const [electricityMode, setElectricityMode] = useState(false);
+  const elec = useElectricityFields(roomId, electricityMode, dueDate);
+
+  function pickElectricity() {
+    setElectricityMode(true);
+  }
+
+  function pickPreset(preset: (typeof PRESETS)[number]) {
+    setElectricityMode(false);
+    setType(preset.type);
+    setDescription(preset.description);
+  }
+
   async function save() {
+    if (electricityMode) {
+      if (!elec.room || !elec.estimate) return toast.error("Enter valid readings to bill.");
+      setBusy(true);
+      const result = await recordElectricityCharge(manager, {
+        roomId: roomId!,
+        startReading: Number(elec.startReading),
+        endReading: Number(elec.endReading),
+        startDate: elec.room.openReading ? undefined : elec.startDateInput,
+        dueDate,
+      });
+      setBusy(false);
+      if (!result) return toast.error("Couldn't bill electricity for that reading.");
+      toast.success(
+        elec.room.occupants.length > 1
+          ? `Electricity billed and split ${elec.room.occupants.length} ways`
+          : "Electricity billed"
+      );
+      onOpenChange(false);
+      router.refresh();
+      return;
+    }
+
     if (amount <= 0) return toast.error("Enter an amount above zero.");
     if (!description.trim()) return toast.error("Say what the charge is for.");
 
@@ -62,39 +102,66 @@ export function ChargeFormDialog({
             {PRESETS.map((preset) => (
               <button
                 key={preset.label}
-                onClick={() => {
-                  setType(preset.type);
-                  setDescription(preset.description);
-                }}
-                className="rounded-full border px-3 py-1 text-xs font-semibold text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+                onClick={() => pickPreset(preset)}
+                className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                  !electricityMode && type === preset.type && description === preset.description
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:border-primary hover:text-primary"
+                }`}
               >
                 {preset.label}
               </button>
             ))}
+            {roomId && (
+              <button
+                onClick={pickElectricity}
+                className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                  electricityMode
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:border-primary hover:text-primary"
+                }`}
+              >
+                Electricity
+              </button>
+            )}
           </div>
 
-          <div>
-            <Label className="mb-1.5">What is it for?</Label>
-            <Input
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Broken window pane"
-            />
-          </div>
+          {electricityMode ? (
+            <>
+              <ElectricityReadingFields fields={elec} />
+              {elec.room && (
+                <div>
+                  <Label className="mb-1.5">Closing date</Label>
+                  <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div>
+                <Label className="mb-1.5">What is it for?</Label>
+                <Input
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Broken window pane"
+                />
+              </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="mb-1.5">Amount</Label>
-              <Input type="number" value={amount || ""} onChange={(e) => setAmount(Number(e.target.value))} />
-            </div>
-            <div>
-              <Label className="mb-1.5">Due on</Label>
-              <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-            </div>
-          </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="mb-1.5">Amount</Label>
+                  <Input type="number" value={amount || ""} onChange={(e) => setAmount(Number(e.target.value))} />
+                </div>
+                <div>
+                  <Label className="mb-1.5">Due on</Label>
+                  <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                </div>
+              </div>
+            </>
+          )}
 
-          <Button onClick={save} disabled={busy} className="w-full">
-            Add charge
+          <Button onClick={save} disabled={busy || (electricityMode && !elec.estimate)} className="w-full">
+            {electricityMode ? "Bill electricity" : "Add charge"}
           </Button>
           <p className="text-xs text-muted-foreground">
             The next payment from {tenantName} settles their oldest charge first.

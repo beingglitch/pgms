@@ -4,6 +4,35 @@ import { prisma } from "@/lib/prisma";
 import { num, round2, summariseCharges } from "@/lib/charges";
 
 /**
+ * Every deposit currently held, one row per tenant, for Ledger > Security.
+ * Deposits aren't tracked through the Charge/dues engine, so this only ever
+ * shows what's actually been given, not anyone still owing one.
+ */
+export async function listSecurityDeposits() {
+  const tenants = await prisma.tenant.findMany({
+    where: { status: "ACTIVE", depositAmount: { gt: 0 } },
+    orderBy: { name: "asc" },
+    select: {
+      id: true,
+      name: true,
+      photoUrl: true,
+      joinDate: true,
+      depositAmount: true,
+      depositMethod: true,
+      depositChequeNumber: true,
+      depositChequeBank: true,
+      roomNumber: true,
+      room: { select: { number: true, floor: { select: { name: true } } } },
+    },
+  });
+
+  return {
+    tenants,
+    total: round2(tenants.reduce((s, t) => s + num(t.depositAmount), 0)),
+  };
+}
+
+/**
  * Deposits are not income. They're money the owner is holding and will hand
  * back, tracked separately from collections so the two never blur together.
  */

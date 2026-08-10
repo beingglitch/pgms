@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CheckCircle2, Send } from "lucide-react";
+import { CheckCircle2, Search, Send } from "lucide-react";
 import { SendDuesReminderDialog } from "@/components/send-dues-reminder-dialog";
 import { Amount, EmptyState, KhataRow, PageTitle, Panel, SectionHeading, StatTile } from "@/components/khata";
 import { getReminderHistory } from "@/app/actions/reminders";
@@ -14,6 +14,7 @@ import { type Signature } from "@/lib/messages";
 import { chargeOutstanding, CHARGE_TYPE_LABELS } from "@/lib/charges";
 import { inr, fmtDate, initials } from "@/lib/format";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 type DueRow = Awaited<ReturnType<typeof listOutstandingByTenant>>[number];
 type History = Awaited<ReturnType<typeof getReminderHistory>>;
@@ -31,8 +32,21 @@ export function RemindersClient({
 }) {
   const router = useRouter();
   const [customFor, setCustomFor] = useState<DueRow | null>(null);
+  const [chaseQuery, setChaseQuery] = useState("");
+  const [sentQuery, setSentQuery] = useState("");
 
   const totalToChase = dues.reduce((s, d) => s + d.summary.total.outstanding, 0);
+
+  const chaseQ = chaseQuery.trim().toLowerCase();
+  const filteredDues = chaseQ
+    ? dues.filter((row) => {
+        const roomLabel = row.tenant.room ? `Room ${row.tenant.room.number}` : row.tenant.roomNumber || "";
+        return row.tenant.name.toLowerCase().includes(chaseQ) || roomLabel.toLowerCase().includes(chaseQ);
+      })
+    : dues;
+
+  const sentQ = sentQuery.trim().toLowerCase();
+  const filteredLogs = sentQ ? history.logs.filter((log) => (log.detail ?? "").toLowerCase().includes(sentQ)) : history.logs;
 
   return (
     <div className="space-y-4">
@@ -57,18 +71,31 @@ export function RemindersClient({
             </EmptyState>
           ) : (
             <>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={chaseQuery}
+                  onChange={(e) => setChaseQuery(e.target.value)}
+                  placeholder="Search by tenant or room"
+                  className="pl-9"
+                />
+              </div>
               <p className="text-xs text-muted-foreground">
                 Each message is itemised and shows only what&apos;s still unpaid. Tap send and it opens in your own
                 WhatsApp or mail app, nothing goes out on its own.
               </p>
-              {dues.map((row) => (
-                <ChaseCard
-                  key={row.tenant.id}
-                  row={row}
-                  lastSent={history.lastSentByTenant[row.tenant.id]}
-                  onSend={() => setCustomFor(row)}
-                />
-              ))}
+              {filteredDues.length === 0 ? (
+                <p className="py-6 text-center text-sm text-muted-foreground">No one matches that search.</p>
+              ) : (
+                filteredDues.map((row) => (
+                  <ChaseCard
+                    key={row.tenant.id}
+                    row={row}
+                    lastSent={history.lastSentByTenant[row.tenant.id]}
+                    onSend={() => setCustomFor(row)}
+                  />
+                ))
+              )}
             </>
           )}
         </TabsContent>
@@ -81,17 +108,32 @@ export function RemindersClient({
                 Nothing sent yet. Sending from the &ldquo;Dues to chase&rdquo; tab records it here.
               </p>
             ) : (
-              history.logs.map((log) => (
-                <div key={log.id} className="khata-row py-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold">{log.detail?.split(" · ")[0]}</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {log.detail?.split(" · ")[1]} via {log.detail?.split(" · ")[2]} ·{" "}
-                      {new Date(log.ts).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}
-                    </p>
-                  </div>
+              <>
+                <div className="relative mb-3">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={sentQuery}
+                    onChange={(e) => setSentQuery(e.target.value)}
+                    placeholder="Search by tenant"
+                    className="pl-9"
+                  />
                 </div>
-              ))
+                {filteredLogs.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-muted-foreground">No sent reminders match that search.</p>
+                ) : (
+                  filteredLogs.map((log) => (
+                    <div key={log.id} className="khata-row py-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold">{log.detail?.split(" · ")[0]}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {log.detail?.split(" · ")[1]} via {log.detail?.split(" · ")[2]} ·{" "}
+                          {new Date(log.ts).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}
+                        </p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </>
             )}
             <p className="mt-3 text-xs text-muted-foreground">
               &ldquo;Sent&rdquo; means the message was handed to WhatsApp or your mail app. This app can&apos;t

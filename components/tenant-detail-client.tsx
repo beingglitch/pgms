@@ -349,7 +349,13 @@ export function TenantDetailClient({
         }
       />
       <CheckoutDialog open={checkoutOpen} onOpenChange={setCheckoutOpen} tenant={tenant} />
-      <ChargeFormDialog open={chargeOpen} onOpenChange={setChargeOpen} tenantId={tenant.id} tenantName={tenant.name} />
+      <ChargeFormDialog
+        open={chargeOpen}
+        onOpenChange={setChargeOpen}
+        tenantId={tenant.id}
+        tenantName={tenant.name}
+        roomId={tenant.roomId}
+      />
       {shareMsg && (
         <SendMessageDialog
           open={!!shareMsg}

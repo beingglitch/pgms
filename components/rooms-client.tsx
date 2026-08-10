@@ -22,7 +22,7 @@ import {
 } from "@/app/actions/rooms";
 import { resetElectricityReading } from "@/app/actions/electricity";
 import { useManager } from "@/lib/manager-context";
-import { initials, fmtDate } from "@/lib/format";
+import { initials, fmtDate, ordinal, inr } from "@/lib/format";
 import { toast } from "sonner";
 
 type Building = Awaited<ReturnType<typeof getBuilding>>;
@@ -219,6 +219,14 @@ function RoomCard({
   onAssign: (bedNumber: string) => void;
   onReset: () => void;
 }) {
+  const [showHistory, setShowHistory] = useState(false);
+
+  const anchorTenant = room.tenants[0];
+  const dueDay = anchorTenant
+    ? new Date(anchorTenant.rentCycleAnchor ?? anchorTenant.joinDate).getUTCDate()
+    : null;
+
+  const closedReadings = room.meterReadings.filter((r) => r.endDate);
 
   return (
     <Panel className="flex flex-col gap-3">
@@ -227,6 +235,7 @@ function RoomCard({
           <p className="font-display text-lg font-semibold leading-none tracking-tight">Room {room.number}</p>
           <p className="mt-1 text-xs text-muted-foreground">
             {capacityWord(room.capacity)} · {room.occupied}/{room.capacity} filled
+            {dueDay && ` · due on the ${ordinal(dueDay)}`}
           </p>
         </div>
         <div className="text-right">
@@ -291,6 +300,36 @@ function RoomCard({
           <Button size="sm" variant="ghost" onClick={onReset} disabled={resetting} title="Reset meter reading">
             <RotateCcw className="h-3.5 w-3.5" />
           </Button>
+        </div>
+      )}
+
+      {closedReadings.length > 0 && (
+        <div className="border-t border-border/70 pt-2">
+          <button
+            onClick={() => setShowHistory((s) => !s)}
+            className="flex w-full items-center justify-between text-[11px] font-semibold text-muted-foreground hover:text-foreground"
+          >
+            <span>
+              <Zap className="mr-1 inline h-3 w-3" /> Past electricity cycles ({closedReadings.length})
+            </span>
+            <span>{showHistory ? "Hide" : "Show"}</span>
+          </button>
+          {showHistory && (
+            <div className="mt-2 space-y-1.5">
+              {closedReadings.map((r) => (
+                <div key={r.id} className="flex items-center justify-between text-[11px]">
+                  <span className="text-muted-foreground">
+                    {fmtDate(r.startDate)} → {fmtDate(r.endDate)} · {Number(r.startReading).toLocaleString("en-IN")}–
+                    {Number(r.endReading).toLocaleString("en-IN")}
+                  </span>
+                  <span className="tabular font-semibold">
+                    {r.units != null ? `${Number(r.units).toLocaleString("en-IN")} u · ` : ""}
+                    {r.amount != null ? inr(Number(r.amount)) : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </Panel>

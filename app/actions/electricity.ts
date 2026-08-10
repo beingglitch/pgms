@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "./activity";
+import { getPgInfo } from "./settings";
 import { billRoomElectricity } from "./charges";
 import { round2 } from "@/lib/charges";
 
@@ -98,6 +99,11 @@ export async function resetElectricityIfRoomEmpty(actor: string, roomId: string)
  * amount from the rate locked in when it was opened, then splits it into a
  * charge per current occupant via billRoomElectricity, the same split every
  * other room reading in the app gets.
+ *
+ * Immediately opens the next cycle too, seeded from this reading's end
+ * number and today's rate: without this, a room would only ever get one
+ * reading in its whole life, since starting a fresh one is otherwise
+ * onboarding-only. "Continuous" is the point, not "restart every time".
  */
 export async function closeElectricityReading(actor: string, billId: string, endReading: number, endDate: string) {
   const bill = await prisma.electricityBill.findUnique({ where: { id: billId }, include: { room: { select: { number: true } } } });
@@ -114,6 +120,19 @@ export async function closeElectricityReading(actor: string, billId: string, end
 
   const result = await billRoomElectricity(actor, billId);
 
+  if (bill.roomId) {
+    const pgInfo = await getPgInfo();
+    await prisma.electricityBill.create({
+      data: {
+        roomId: bill.roomId,
+        startReading: endReading,
+        startDate: new Date(endDate),
+        ratePerUnit: pgInfo.electricityRatePerUnit,
+        recordedBy: actor,
+      },
+    });
+  }
+
   await logActivity(
     actor,
     "Electricity reading closed",
@@ -125,6 +144,61 @@ export async function closeElectricityReading(actor: string, billId: string, end
   revalidatePath("/");
 
   return { units, amount, chargesCreated: result.created };
+}
+
+/**
+ * What the "add an electricity charge" flow needs: the room's open reading
+ * (if any) to close out, who's currently sharing it, and the rate to use if
+ * there's no open reading yet (the room's very first bill).
+ */
+export async function getRoomElectricityContext(roomId: string) {
+  const [openReading, occupants, pgInfo] = await Promise.all([
+    prisma.electricityBill.findFirst({ where: { roomId, endDate: null } }),
+    prisma.tenant.findMany({
+      where: { roomId, status: "ACTIVE" },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, joinDate: true },
+    }),
+    getPgInfo(),
+  ]);
+  return { openReading, occupants, ratePerUnit: pgInfo.electricityRatePerUnit };
+}
+
+/**
+ * The one entry point every "add an electricity charge" flow calls. Handles
+ * all three cases the owner can be in: a normal cycle close (bills against
+ * the room's open reading), a corrected starting number (the owner knows the
+ * open reading's number is wrong and overrides it before billing), and a
+ * room with no open reading at all (first bill ever, or one after a reset)
+ * where both ends of the reading are entered fresh.
+ */
+export async function recordElectricityCharge(
+  actor: string,
+  input: { roomId: string; startReading: number; endReading: number; startDate?: string; dueDate: string }
+) {
+  let bill = await prisma.electricityBill.findFirst({ where: { roomId: input.roomId, endDate: null } });
+
+  if (bill) {
+    if (Number(bill.startReading) !== input.startReading) {
+      bill = await prisma.electricityBill.update({
+        where: { id: bill.id },
+        data: { startReading: input.startReading },
+      });
+    }
+  } else {
+    const pgInfo = await getPgInfo();
+    bill = await prisma.electricityBill.create({
+      data: {
+        roomId: input.roomId,
+        startReading: input.startReading,
+        startDate: new Date(input.startDate ?? input.dueDate),
+        ratePerUnit: pgInfo.electricityRatePerUnit,
+        recordedBy: actor,
+      },
+    });
+  }
+
+  return closeElectricityReading(actor, bill.id, input.endReading, input.dueDate);
 }
 
 /**

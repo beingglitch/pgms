@@ -28,7 +28,16 @@ export async function getBuilding() {
           tenants: {
             where: { status: "ACTIVE" },
             orderBy: { name: "asc" },
-            select: { id: true, name: true, photoUrl: true, bedNumber: true, rentOverride: true, rentAmount: true },
+            select: {
+              id: true,
+              name: true,
+              photoUrl: true,
+              bedNumber: true,
+              rentOverride: true,
+              rentAmount: true,
+              joinDate: true,
+              rentCycleAnchor: true,
+            },
           },
           // A handful of recent readings, enough to find both the latest
           // closed one (seeds the next reading's start value) and any

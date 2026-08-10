@@ -149,6 +149,7 @@ export function SettingsClient({ pgInfo, activity }: { pgInfo: PgInfoModel; acti
         <div>
           <Label className="mb-1.5">&ldquo;Due soon&rdquo; window</Label>
           <Select
+            items={{ "7": "7 days", "14": "14 days", "30": "30 days", "60": "60 days" }}
             value={String(pg.dueSoonDays)}
             onValueChange={(v) => v && setPg({ ...pg, dueSoonDays: Number(v) })}
           >

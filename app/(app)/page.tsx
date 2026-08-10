@@ -1,58 +1,35 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Amount, EmptyState, KhataRow, Panel, SectionHeading, StatTile } from "@/components/khata";
-import { CollectionsChart, OutstandingBar, type MonthPoint } from "@/components/charts";
-import { getPgInfo } from "@/app/actions/settings";
 import { getBuilding } from "@/app/actions/rooms";
 import { getDepositLiability } from "@/app/actions/reports";
 import { listOutstandingByTenant } from "@/app/actions/charges";
 import { listActivity } from "@/app/actions/activity";
-import { inr, fmtDate, monthKey, todayISO, daysFromNowISO, dateISO, initials } from "@/lib/format";
+import { getPgInfo } from "@/app/actions/settings";
+import { FinanceChart, type MonthFinance } from "@/components/finance-chart";
+import { inr, fmtDate, monthKey, todayISO, daysFromNowISO, dateISO } from "@/lib/format";
 import { chargeOutstanding, num, periodLabel, round2 } from "@/lib/charges";
 import { ChevronRight, Sparkles, Wallet } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
-/**
- * The last six billing months, oldest first, anchored to the property's
- * timezone rather than the server's. `new Date().getMonth()` reads the
- * server's local calendar, UTC on Vercel, which briefly disagrees with IST
- * around midnight and can hand the client a different "current month" than
- * what the server just rendered, the exact class of bug documented on
- * `PROPERTY_TIMEZONE` in lib/format.ts. Plain integer month arithmetic on the
- * IST date string sidesteps that entirely.
- */
-function recentPeriods(count = 6) {
-  const [year, month] = todayISO().split("-").map(Number);
-  return Array.from({ length: count }, (_, i) => {
-    const offset = month - 1 - (count - 1 - i);
-    const y = year + Math.floor(offset / 12);
-    const m = ((offset % 12) + 12) % 12;
-    return `${y}-${String(m + 1).padStart(2, "0")}`;
-  });
-}
-
 export default async function DashboardPage() {
-  const [pgInfo, building, deposits, dues, charges, payments, activity, expenses] = await Promise.all([
-    getPgInfo(),
+  const [building, deposits, dues, payments, activity, expenses, pgInfo] = await Promise.all([
     getBuilding(),
     getDepositLiability(),
     listOutstandingByTenant(),
-    prisma.charge.findMany({ include: { allocations: { select: { amount: true } } } }),
     // Every payment, not a page of them. The old dashboard summed only the six
     // most recent entries and under-reported the month.
     prisma.ledgerEntry.findMany({
       where: { type: { in: ["RENT", "OTHER"] } },
-      select: { amount: true, date: true },
+      select: { amount: true, date: true, type: true },
     }),
     listActivity(8),
     prisma.expense.findMany({ where: { active: true } }),
+    getPgInfo(),
   ]);
 
   const thisMonth = monthKey(new Date());
-  const today = todayISO();
-  const horizon = daysFromNowISO(pgInfo.dueSoonDays);
 
   const collectedThisMonth = round2(
     payments.filter((p) => monthKey(p.date) === thisMonth).reduce((s, p) => s + num(p.amount), 0)
@@ -62,39 +39,70 @@ export default async function DashboardPage() {
   const overdueTotal = round2(dues.reduce((s, d) => s + d.summary.overdue, 0));
   const overdueRows = dues.filter((d) => d.summary.overdue > 0);
 
-  const dueSoon = dues.filter((row) =>
-    row.tenant.charges.some((c) => {
+  // Upcoming: outstanding charges due later, within the Settings window, but
+  // not yet due today or overdue (that's the Overdue tile's job).
+  const today = todayISO();
+  const horizon = daysFromNowISO(pgInfo.dueSoonDays);
+  const dueSoonRows = dues.filter((d) =>
+    d.tenant.charges.some((c) => {
       if (chargeOutstanding(c) <= 0.005) return false;
       const day = dateISO(c.dueDate);
-      return day >= today && day <= horizon;
+      return day > today && day <= horizon;
     })
   );
-
-  const byType = { RENT: 0, ELECTRICITY: 0, OTHER: 0 };
-  for (const charge of charges) {
-    const owed = chargeOutstanding(charge);
-    if (owed <= 0.005) continue;
-    if (charge.type === "RENT") byType.RENT += owed;
-    else if (charge.type === "ELECTRICITY") byType.ELECTRICITY += owed;
-    else byType.OTHER += owed;
-  }
-
-  const monthly: MonthPoint[] = recentPeriods().map((period) => {
-    const forPeriod = charges.filter((c) => c.period === period && !c.waived);
-    return {
-      period,
-      billed: round2(forPeriod.reduce((s, c) => s + num(c.amount), 0)),
-      collected: round2(
-        forPeriod.reduce((s, c) => s + c.allocations.reduce((a, x) => a + num(x.amount), 0), 0)
-      ),
-    };
-  });
+  const dueSoonTotal = round2(
+    dueSoonRows.reduce((s, d) => {
+      const rowSoon = d.tenant.charges
+        .filter((c) => chargeOutstanding(c) > 0.005)
+        .filter((c) => {
+          const day = dateISO(c.dueDate);
+          return day > today && day <= horizon;
+        })
+        .reduce((rs, c) => rs + chargeOutstanding(c), 0);
+      return s + rowSoon;
+    }, 0)
+  );
 
   // Yearly costs are averaged so the figure means "per month" throughout.
-  const monthlyExpenses = round2(
+  const recurringExpenses = round2(
     expenses.filter((e) => e.frequency === "MONTHLY").reduce((s, e) => s + num(e.amount), 0) +
       expenses.filter((e) => e.frequency === "YEARLY").reduce((s, e) => s + num(e.amount) / 12, 0)
   );
+  const oneTimeThisMonth = round2(
+    expenses
+      .filter((e) => e.frequency === "ONE_TIME" && monthKey(e.date) === thisMonth)
+      .reduce((s, e) => s + num(e.amount), 0)
+  );
+  const totalThisMonth = round2(recurringExpenses + oneTimeThisMonth);
+
+  // Two years back, oldest first. The chart itself only shows a handful at
+  // once, but keeps the rest around to pan and zoom into.
+  const chartMonths: string[] = [];
+  for (let i = 23; i >= 0; i--) {
+    const d = new Date();
+    d.setMonth(d.getMonth() - i);
+    chartMonths.push(monthKey(d));
+  }
+  const financeData: MonthFinance[] = chartMonths.map((period) => {
+    const collected = round2(
+      payments.filter((p) => monthKey(p.date) === period).reduce((s, p) => s + num(p.amount), 0)
+    );
+    const rent = round2(
+      payments
+        .filter((p) => monthKey(p.date) === period && p.type === "RENT")
+        .reduce((s, p) => s + num(p.amount), 0)
+    );
+    const oneTime = expenses
+      .filter((e) => e.frequency === "ONE_TIME" && monthKey(e.date) === period)
+      .reduce((s, e) => s + num(e.amount), 0);
+    const monthly = expenses
+      .filter((e) => e.frequency === "MONTHLY" && monthKey(e.date) <= period)
+      .reduce((s, e) => s + num(e.amount), 0);
+    const yearly = expenses
+      .filter((e) => e.frequency === "YEARLY" && monthKey(e.date) <= period)
+      .reduce((s, e) => s + num(e.amount) / 12, 0);
+    return { period, collected, rent, spend: round2(oneTime + monthly + yearly) };
+  });
 
   return (
     <div className="space-y-5">
@@ -136,88 +144,22 @@ export default async function DashboardPage() {
           value={overdueRows.length}
           tone={overdueRows.length > 0 ? "owed" : "muted"}
           hint={overdueRows.length > 0 ? `${inr(overdueTotal)} past due` : "Nobody is late"}
-          href="/ledger?tab=dues"
+          href="/ledger?tab=dues&filter=current"
         />
         <StatTile
           label={`Due in ${pgInfo.dueSoonDays} days`}
-          value={dueSoon.length}
-          hint="Change this window in Settings"
-          href="/ledger?tab=dues"
+          value={dueSoonRows.length}
+          tone={dueSoonRows.length > 0 ? "owed" : "muted"}
+          hint={dueSoonRows.length > 0 ? `${inr(dueSoonTotal)} coming up` : "Nothing coming up"}
+          href="/ledger?tab=dues&filter=upcoming"
         />
         <StatTile
-          label="Deposits held"
-          value={inr(deposits.held)}
-          tone="held"
-          hint={deposits.asCheque > 0 ? `${inr(deposits.asCheque)} as cheques` : "Owed back on checkout"}
+          label="Monthly running costs"
+          value={inr(totalThisMonth)}
+          hint={`${inr(recurringExpenses)} recurring`}
+          href="/expenses"
         />
       </div>
-
-      <Panel>
-        <SectionHeading>Billed vs collected</SectionHeading>
-        <CollectionsChart data={monthly} />
-      </Panel>
-
-      {outstandingTotal > 0 && (
-        <Panel>
-          <SectionHeading
-            action={
-              <Link href="/ledger?tab=dues" className="text-xs font-semibold text-primary">
-                See who owes
-              </Link>
-            }
-          >
-            What&apos;s outstanding
-          </SectionHeading>
-          <OutstandingBar
-            slices={[
-              { label: "Rent", value: round2(byType.RENT), fill: "var(--chart-rent)" },
-              { label: "Electricity", value: round2(byType.ELECTRICITY), fill: "var(--chart-power)" },
-              { label: "Other charges", value: round2(byType.OTHER), fill: "var(--chart-other)" },
-            ]}
-          />
-        </Panel>
-      )}
-
-      <Panel>
-        <SectionHeading
-          action={
-            <Link href="/ledger?tab=dues" className="text-xs font-semibold text-primary">
-              All dues
-            </Link>
-          }
-        >
-          Who owes right now
-        </SectionHeading>
-        {dues.length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">Everyone is settled up. Nothing to chase.</p>
-        ) : (
-          dues.slice(0, 5).map(({ tenant, summary }) => (
-            <KhataRow
-              key={tenant.id}
-              amount={
-                <div className="text-right">
-                  <Amount value={summary.total.outstanding} tone="owed" />
-                  {summary.overdue > 0 && <p className="text-[11px] font-semibold text-ledger">overdue</p>}
-                </div>
-              }
-            >
-              <Link href={`/tenants/${tenant.id}`} className="flex items-center gap-2.5">
-                <Avatar className="h-8 w-8">
-                  <AvatarImage src={tenant.photoUrl ?? undefined} />
-                  <AvatarFallback className="text-[10px]">{initials(tenant.name)}</AvatarFallback>
-                </Avatar>
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold">{tenant.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {tenant.room ? `Room ${tenant.room.number}` : tenant.roomNumber || "No room"} ·{" "}
-                    {tenant.charges.filter((c) => chargeOutstanding(c) > 0.005).length} open
-                  </p>
-                </div>
-              </Link>
-            </KhataRow>
-          ))
-        )}
-      </Panel>
 
       {deposits.leavingSoon.length > 0 && (
         <Panel className="border-marigold/40 bg-marigold/5">
@@ -238,15 +180,10 @@ export default async function DashboardPage() {
         </Panel>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <StatTile
-          label="Monthly running costs"
-          value={inr(monthlyExpenses)}
-          hint="Recurring spend, yearly costs averaged"
-          href="/expenses"
-        />
-        <StatTile label="Tenants" value={building.totals.occupied} hint={`${dues.length} with a balance`} href="/tenants" />
-      </div>
+      <Panel>
+        <SectionHeading>Collections, rent, and spends</SectionHeading>
+        <FinanceChart data={financeData} />
+      </Panel>
 
       <Panel>
         <SectionHeading

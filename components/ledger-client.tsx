@@ -18,56 +18,90 @@ import { SendDuesReminderDialog } from "@/components/send-dues-reminder-dialog";
 import { Amount, EmptyState, KhataRow, PageTitle, Panel, StatTile } from "@/components/khata";
 import { deleteLedgerEntry, listLedger } from "@/app/actions/ledger";
 import { listOutstandingByTenant, waiveCharge } from "@/app/actions/charges";
-import { chargeOutstanding, CHARGE_TYPE_LABELS, num } from "@/lib/charges";
+import { deleteExpense, listExpenses } from "@/app/actions/expenses";
+import { listSecurityDeposits } from "@/app/actions/reports";
+import { chargeOutstanding, CHARGE_TYPE_LABELS, num, periodLabel } from "@/lib/charges";
 import { type Signature } from "@/lib/messages";
 import { useManager } from "@/lib/manager-context";
-import { inr, fmtDate, monthKey, initials, todayISO } from "@/lib/format";
+import { inr, fmtDate, monthKey, initials, todayISO, daysFromNowISO, dateISO, paymentMethodLabel } from "@/lib/format";
 import { toast } from "sonner";
 
 type Entry = Awaited<ReturnType<typeof listLedger>>[number];
+type ExpenseRow = Awaited<ReturnType<typeof listExpenses>>[number];
 type DueRow = Awaited<ReturnType<typeof listOutstandingByTenant>>[number];
-type TenantOption = { id: string; name: string; roomNumber: string | null; rentAmount: unknown; phone: string; email: string | null };
+type Deposits = Awaited<ReturnType<typeof listSecurityDeposits>>;
+type TenantOption = {
+  id: string;
+  name: string;
+  photoUrl: string | null;
+  roomNumber: string | null;
+  rentAmount: unknown;
+  phone: string;
+  email: string | null;
+  room: { id: string } | null;
+};
+type FeedRow = { kind: "payment"; date: Date; data: Entry } | { kind: "expense"; date: Date; data: ExpenseRow };
 
 export function LedgerClient({
   entries,
+  expenses,
+  deposits,
   dues,
   tenants,
+  dueSoonDays,
   initialTab,
+  initialDuesFilter,
+  initialMonth,
   signature,
   paymentLink,
 }: {
   entries: Entry[];
+  expenses: ExpenseRow[];
+  deposits: Deposits;
   dues: DueRow[];
   tenants: TenantOption[];
-  initialTab: "payments" | "dues";
+  dueSoonDays: number;
+  initialTab: "payments" | "dues" | "security";
+  initialDuesFilter?: "all" | "upcoming" | "current";
+  initialMonth?: string;
   signature: Signature;
   paymentLink: string;
 }) {
   const router = useRouter();
   const { manager } = useManager();
   const [tab, setTab] = useState(initialTab);
-  const [payOpen, setPayOpen] = useState(false);
   const [chargeFor, setChargeFor] = useState<DueRow | null>(null);
   const [receipt, setReceipt] = useState<Entry | null>(null);
   const [remindTarget, setRemindTarget] = useState<DueRow | null>(null);
   const [payTarget, setPayTarget] = useState<DueRow | null>(null);
+  const [duesFilter, setDuesFilter] = useState<"all" | "upcoming" | "current">(initialDuesFilter ?? "all");
+  const [pickingTenant, setPickingTenant] = useState(false);
+  const [addDueTenant, setAddDueTenant] = useState<TenantOption | null>(null);
+  const [tenantQuery, setTenantQuery] = useState("");
 
   const totalOutstanding = dues.reduce((s, d) => s + d.summary.total.outstanding, 0);
   const overdueTotal = dues.reduce((s, d) => s + d.summary.overdue, 0);
 
+  // Current: due today or overdue, the day a charge exists at all in the
+  // normal case. Upcoming: due later, but inside the window Settings sets,
+  // which mostly means a charge someone added ahead of time by hand.
+  const today = todayISO();
+  const horizon = daysFromNowISO(dueSoonDays);
+  const filteredDues = dues.filter((row) => {
+    if (duesFilter === "all") return true;
+    const openCharges = row.tenant.charges.filter((c) => chargeOutstanding(c) > 0.005);
+    if (duesFilter === "current") return openCharges.some((c) => dateISO(c.dueDate) <= today);
+    return openCharges.some((c) => {
+      const day = dateISO(c.dueDate);
+      return day > today && day <= horizon;
+    });
+  });
+
   return (
     <div className="space-y-4">
-      <PageTitle
-        action={
-          <Button size="sm" onClick={() => setPayOpen(true)}>
-            <Plus className="h-4 w-4" /> Record payment
-          </Button>
-        }
-      >
-        Ledger
-      </PageTitle>
+      <PageTitle>Ledger</PageTitle>
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as "payments" | "dues")}>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as "payments" | "dues" | "security")}>
         <TabsList className="w-full">
           <TabsTrigger value="payments" className="flex-1">
             Payments
@@ -80,10 +114,20 @@ export function LedgerClient({
               </span>
             )}
           </TabsTrigger>
+          <TabsTrigger value="security" className="flex-1">
+            Security
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="payments" className="mt-4">
-          <PaymentsTab entries={entries} onReceipt={setReceipt} manager={manager} onChanged={() => router.refresh()} />
+          <PaymentsTab
+            entries={entries}
+            expenses={expenses}
+            onReceipt={setReceipt}
+            manager={manager}
+            onChanged={() => router.refresh()}
+            initialMonth={initialMonth}
+          />
         </TabsContent>
 
         <TabsContent value="dues" className="mt-4 space-y-4">
@@ -97,29 +141,99 @@ export function LedgerClient({
             />
           </div>
 
+          <Button
+            variant="secondary"
+            className="w-full"
+            onClick={() => {
+              setTenantQuery("");
+              setPickingTenant(true);
+            }}
+          >
+            <Plus className="h-4 w-4" /> Add due
+          </Button>
+
           {dues.length === 0 ? (
             <EmptyState icon={Sparkles} title="Nobody owes anything">
               Every charge raised so far has been paid in full.
             </EmptyState>
           ) : (
-            <div className="space-y-3">
-              {dues.map((row) => (
-                <DueCard
-                  key={row.tenant.id}
-                  row={row}
-                  manager={manager}
-                  onAddCharge={() => setChargeFor(row)}
-                  onRemind={() => setRemindTarget(row)}
-                  onPay={() => setPayTarget(row)}
-                  onChanged={() => router.refresh()}
-                />
-              ))}
-            </div>
+            <>
+              <div className="flex gap-2">
+                {(["all", "current", "upcoming"] as const).map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setDuesFilter(f)}
+                    className={`whitespace-nowrap rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                      duesFilter === f ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {f === "all" ? "All" : f === "current" ? "Current" : "Upcoming"}
+                  </button>
+                ))}
+              </div>
+
+              {filteredDues.length === 0 ? (
+                <EmptyState icon={Sparkles} title="Nothing here">
+                  No dues match this filter right now.
+                </EmptyState>
+              ) : (
+                <div className="space-y-3">
+                  {filteredDues.map((row) => (
+                    <DueCard
+                      key={row.tenant.id}
+                      row={row}
+                      manager={manager}
+                      onAddCharge={() => setChargeFor(row)}
+                      onRemind={() => setRemindTarget(row)}
+                      onPay={() => setPayTarget(row)}
+                      onChanged={() => router.refresh()}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
           )}
+        </TabsContent>
+
+        <TabsContent value="security" className="mt-4 space-y-4">
+          <StatTile label="Security held, all tenants" value={inr(deposits.total)} tone="held" />
+
+          {deposits.tenants.length === 0 ? (
+            <EmptyState icon={Sparkles} title="No deposits held">
+              Security deposits show up here once tenants are onboarded with one.
+            </EmptyState>
+          ) : (
+            <Panel className="py-0">
+              {deposits.tenants.map((t) => {
+                const roomLabel = t.room ? `${t.room.floor.name} · Room ${t.room.number}` : t.roomNumber;
+                return (
+                  <KhataRow key={t.id} amount={<Amount value={t.depositAmount} tone="held" />}>
+                    <Link href={`/tenants/${t.id}`} className="flex items-center gap-2.5">
+                      <Avatar className="h-8 w-8">
+                        <AvatarImage src={t.photoUrl ?? undefined} />
+                        <AvatarFallback className="text-[10px]">{initials(t.name)}</AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold">{t.name}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {roomLabel || "No room"} · taken as{" "}
+                          {t.depositMethod === "CHEQUE" ? "blank cheque" : paymentMethodLabel(t.depositMethod)} ·{" "}
+                          {fmtDate(t.joinDate)}
+                        </p>
+                      </div>
+                    </Link>
+                  </KhataRow>
+                );
+              })}
+            </Panel>
+          )}
+          <p className="text-xs text-muted-foreground">
+            This only shows deposits actually given. A tenant who still owes part of their deposit shows that as a
+            due instead.
+          </p>
         </TabsContent>
       </Tabs>
 
-      <LedgerFormDialog open={payOpen} onOpenChange={setPayOpen} tenants={tenants as never} />
       {payTarget && (
         <LedgerFormDialog
           open={!!payTarget}
@@ -140,6 +254,66 @@ export function LedgerClient({
           onOpenChange={(o) => !o && setChargeFor(null)}
           tenantId={chargeFor.tenant.id}
           tenantName={chargeFor.tenant.name}
+          roomId={chargeFor.tenant.room?.id}
+        />
+      )}
+
+      <Dialog open={pickingTenant} onOpenChange={setPickingTenant}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add a due for</DialogTitle>
+          </DialogHeader>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={tenantQuery}
+              onChange={(e) => setTenantQuery(e.target.value)}
+              placeholder="Search tenants"
+              className="pl-9"
+              autoFocus
+            />
+          </div>
+          <div className="max-h-80 space-y-1 overflow-y-auto">
+            {tenants
+              .filter((t) => t.name.toLowerCase().includes(tenantQuery.trim().toLowerCase()))
+              .map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => {
+                    setPickingTenant(false);
+                    setAddDueTenant(t);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-xl px-2 py-2 text-left transition-colors hover:bg-muted"
+                >
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src={t.photoUrl ?? undefined} />
+                    <AvatarFallback className="text-[10px]">{initials(t.name)}</AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold">{t.name}</p>
+                    <p className="truncate text-xs text-muted-foreground">{t.roomNumber ? `Room ${t.roomNumber}` : "No room"}</p>
+                  </div>
+                </button>
+              ))}
+            {tenants.filter((t) => t.name.toLowerCase().includes(tenantQuery.trim().toLowerCase())).length === 0 && (
+              <p className="py-6 text-center text-sm text-muted-foreground">No tenants match that search.</p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {addDueTenant && (
+        <ChargeFormDialog
+          open={!!addDueTenant}
+          onOpenChange={(o) => {
+            if (!o) {
+              setAddDueTenant(null);
+              router.refresh();
+            }
+          }}
+          tenantId={addDueTenant.id}
+          tenantName={addDueTenant.name}
+          roomId={addDueTenant.room?.id}
         />
       )}
       {receipt && <ReceiptDialog open={!!receipt} onOpenChange={(o) => !o && setReceipt(null)} entryId={receipt.id} signature={signature} paymentLink={paymentLink} />}
@@ -168,24 +342,37 @@ export function LedgerClient({
 
 function PaymentsTab({
   entries,
+  expenses,
   onReceipt,
   manager,
   onChanged,
+  initialMonth,
 }: {
   entries: Entry[];
+  expenses: ExpenseRow[];
   onReceipt: (e: Entry) => void;
   manager: string;
   onChanged: () => void;
+  initialMonth?: string;
 }) {
   const [query, setQuery] = useState("");
-  const [month, setMonth] = useState("all");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [month, setMonth] = useState(initialMonth ?? "all");
   const [tenantFilter, setTenantFilter] = useState("all");
 
+  // Tenant payments and property spend, one chronological feed, the way a
+  // real khata has money in and money out on the same page.
+  const feed = useMemo<FeedRow[]>(
+    () =>
+      [
+        ...entries.map((e): FeedRow => ({ kind: "payment", date: e.date, data: e })),
+        ...expenses.map((e): FeedRow => ({ kind: "expense", date: e.date, data: e })),
+      ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+    [entries, expenses]
+  );
+
   const months = useMemo(
-    () => Array.from(new Set(entries.map((e) => monthKey(e.date)))).sort().reverse(),
-    [entries]
+    () => Array.from(new Set(feed.map((r) => monthKey(r.date)))).sort().reverse(),
+    [feed]
   );
 
   // Only tenants who actually have entries, so the picker isn't cluttered
@@ -200,31 +387,44 @@ function PaymentsTab({
 
   const list = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return entries.filter((e) => {
-      if (tenantFilter !== "all" && e.tenant?.id !== tenantFilter) return false;
-      if (month !== "all" && monthKey(e.date) !== month) return false;
-      const day = new Date(e.date).toISOString().slice(0, 10);
-      if (from && day < from) return false;
-      if (to && day > to) return false;
+    return feed.filter((r) => {
+      // Spend has no tenant, so filtering by one naturally leaves it out.
+      if (tenantFilter !== "all" && (r.kind !== "payment" || r.data.tenant?.id !== tenantFilter)) return false;
+      if (month !== "all" && monthKey(r.date) !== month) return false;
       if (!q) return true;
+      if (r.kind === "payment") {
+        return (
+          (r.data.tenant?.name ?? "").toLowerCase().includes(q) ||
+          (r.data.receiptNo ?? "").toLowerCase().includes(q) ||
+          (r.data.note ?? "").toLowerCase().includes(q) ||
+          r.data.type.toLowerCase().includes(q)
+        );
+      }
       return (
-        (e.tenant?.name ?? "").toLowerCase().includes(q) ||
-        (e.receiptNo ?? "").toLowerCase().includes(q) ||
-        (e.note ?? "").toLowerCase().includes(q) ||
-        e.type.toLowerCase().includes(q)
+        r.data.title.toLowerCase().includes(q) ||
+        r.data.category.toLowerCase().includes(q) ||
+        (r.data.note ?? "").toLowerCase().includes(q)
       );
     });
-  }, [entries, query, month, from, to, tenantFilter]);
+  }, [feed, query, month, tenantFilter]);
 
   // Deposits are held, not earned, so they're totalled separately.
-  const collected = list.filter((e) => e.type === "RENT" || e.type === "OTHER").reduce((s, e) => s + num(e.amount), 0);
-  const deposits = list.filter((e) => e.type === "DEPOSIT").reduce((s, e) => s + num(e.amount), 0);
-  const refunds = list.filter((e) => e.type === "REFUND").reduce((s, e) => s + num(e.amount), 0);
-  const filtered = query || month !== "all" || from || to || tenantFilter !== "all";
+  const payments = list.filter((r) => r.kind === "payment").map((r) => r.data);
+  const spend = list.filter((r) => r.kind === "expense").map((r) => r.data);
+  const collected = payments.filter((e) => e.type === "RENT" || e.type === "OTHER").reduce((s, e) => s + num(e.amount), 0);
+  const deposits = payments.filter((e) => e.type === "DEPOSIT").reduce((s, e) => s + num(e.amount), 0);
+  const refunds = payments.filter((e) => e.type === "REFUND").reduce((s, e) => s + num(e.amount), 0);
+  const spent = spend.reduce((s, e) => s + num(e.amount), 0);
+  const filtered = query || month !== "all" || tenantFilter !== "all";
 
   async function remove(id: string) {
     await deleteLedgerEntry(manager, id);
     toast.success("Entry deleted");
+    onChanged();
+  }
+  async function removeExpense(id: string) {
+    await deleteExpense(manager, id);
+    toast.success("Expense deleted");
     onChanged();
   }
 
@@ -243,7 +443,11 @@ function PaymentsTab({
         <div className="flex flex-wrap items-center gap-2">
           <Select value={tenantFilter} onValueChange={(v) => v && setTenantFilter(v)}>
             <SelectTrigger className="w-auto flex-1 text-xs">
-              <SelectValue placeholder="All tenants" />
+              <SelectValue placeholder="All tenants">
+                {(value: string) =>
+                  value === "all" || !value ? "All tenants" : (tenantOptions.find((t) => t.id === value)?.name ?? "All tenants")
+                }
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All tenants</SelectItem>
@@ -254,9 +458,6 @@ function PaymentsTab({
               ))}
             </SelectContent>
           </Select>
-          <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-auto flex-1 text-xs" />
-          <span className="text-xs text-muted-foreground">to</span>
-          <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-auto flex-1 text-xs" />
           {filtered && (
             <Button
               size="sm"
@@ -264,8 +465,6 @@ function PaymentsTab({
               onClick={() => {
                 setQuery("");
                 setMonth("all");
-                setFrom("");
-                setTo("");
                 setTenantFilter("all");
               }}
             >
@@ -282,7 +481,7 @@ function PaymentsTab({
                 month === m ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
               }`}
             >
-              {m === "all" ? "All time" : m}
+              {m === "all" ? "All time" : periodLabel(m)}
             </button>
           ))}
         </div>
@@ -305,57 +504,93 @@ function PaymentsTab({
             <Amount value={refunds} tone="muted" size="lg" />
           </div>
         )}
+        {spent > 0 && (
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted-foreground">Spent in view</p>
+            <Amount value={spent} tone="owed" size="lg" />
+          </div>
+        )}
       </Panel>
 
       {list.length === 0 ? (
-        <EmptyState icon={BookOpen} title={filtered ? "No payments match" : "No payments yet"}>
+        <EmptyState icon={BookOpen} title={filtered ? "Nothing matches" : "No payments or spend yet"}>
           {filtered ? "Try a wider date range or clear the filters." : "Record your first payment and it will appear here with a receipt number."}
         </EmptyState>
       ) : (
         <Panel className="py-0">
-          {list.map((e) => (
-            <KhataRow
-              key={e.id}
-              amount={
-                <div className="text-right">
-                  <Amount value={e.amount} tone={e.type === "REFUND" ? "owed" : e.type === "DEPOSIT" ? "held" : "positive"} />
-                  <div className="mt-0.5 flex items-center justify-end gap-2">
-                    <button onClick={() => onReceipt(e)} className="text-[11px] font-semibold text-primary">
-                      Receipt
-                    </button>
-                    <button onClick={() => remove(e.id)} className="text-[11px] font-semibold text-destructive">
+          {list.map((r) =>
+            r.kind === "payment" ? (
+              <KhataRow
+                key={r.data.id}
+                amount={
+                  <div className="text-right">
+                    <Amount value={r.data.amount} tone={r.data.type === "REFUND" ? "owed" : r.data.type === "DEPOSIT" ? "held" : "positive"} />
+                    <div className="mt-0.5 flex items-center justify-end gap-2">
+                      <button onClick={() => onReceipt(r.data)} className="text-[11px] font-semibold text-primary">
+                        Receipt
+                      </button>
+                      <button onClick={() => remove(r.data.id)} className="text-[11px] font-semibold text-destructive">
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                }
+              >
+                <div className="flex items-center gap-2.5">
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src={r.data.tenant?.photoUrl ?? undefined} />
+                    <AvatarFallback className="text-[10px]">{initials(r.data.tenant?.name)}</AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold">
+                      {r.data.tenant?.name || "Unknown tenant"}
+                      <Badge variant="outline" className="ml-1.5 capitalize">
+                        {r.data.type.toLowerCase()}
+                      </Badge>
+                    </p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {fmtDate(r.data.date)} · {r.data.mode.replace("_", " ").toLowerCase()}
+                      {r.data.receiptNo ? <span className="serial"> · {r.data.receiptNo}</span> : null}
+                    </p>
+                    {r.data.allocations.length > 0 && (
+                      <p className="truncate text-[11px] text-muted-foreground">
+                        → {r.data.allocations.map((a) => a.charge.description).join(", ")}
+                      </p>
+                    )}
+                    {r.data.note && <p className="truncate text-[11px] text-muted-foreground">{r.data.note}</p>}
+                  </div>
+                </div>
+              </KhataRow>
+            ) : (
+              <KhataRow
+                key={r.data.id}
+                amount={
+                  <div className="text-right">
+                    <Amount value={r.data.amount} tone="owed" />
+                    <button
+                      onClick={() => removeExpense(r.data.id)}
+                      className="mt-0.5 text-[11px] font-semibold text-destructive"
+                    >
                       Delete
                     </button>
                   </div>
-                </div>
-              }
-            >
-              <div className="flex items-center gap-2.5">
-                <Avatar className="h-8 w-8">
-                  <AvatarImage src={e.tenant?.photoUrl ?? undefined} />
-                  <AvatarFallback className="text-[10px]">{initials(e.tenant?.name)}</AvatarFallback>
-                </Avatar>
+                }
+              >
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold">
-                    {e.tenant?.name || "Unknown tenant"}
-                    <Badge variant="outline" className="ml-1.5 capitalize">
-                      {e.type.toLowerCase()}
+                    {r.data.title}
+                    <Badge variant="outline" className="ml-1.5">
+                      Spend
                     </Badge>
                   </p>
                   <p className="truncate text-xs text-muted-foreground">
-                    {fmtDate(e.date)} · {e.mode.replace("_", " ").toLowerCase()}
-                    {e.receiptNo ? <span className="serial"> · {e.receiptNo}</span> : null}
+                    {fmtDate(r.data.date)} · {r.data.category}
                   </p>
-                  {e.allocations.length > 0 && (
-                    <p className="truncate text-[11px] text-muted-foreground">
-                      → {e.allocations.map((a) => a.charge.description).join(", ")}
-                    </p>
-                  )}
-                  {e.note && <p className="truncate text-[11px] text-muted-foreground">{e.note}</p>}
+                  {r.data.note && <p className="truncate text-[11px] text-muted-foreground">{r.data.note}</p>}
                 </div>
-              </div>
-            </KhataRow>
-          ))}
+              </KhataRow>
+            )
+          )}
         </Panel>
       )}
     </div>

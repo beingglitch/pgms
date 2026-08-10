@@ -155,13 +155,16 @@ export async function createTenant(actor: string, input: TenantInput, agreement:
   // Moving into a room that already has someone in it doesn't start its own
   // cycle: the first charge is pro-rated up to the existing roommate's next
   // due-day, and every cycle after that is anchored there too, so the room
-  // settles onto one shared due date instead of two.
+  // settles onto one shared due date instead of two. If they're joining on
+  // that same day-of-month already (most commonly: joining the same day as
+  // the roommate they're moving in with), they're already in sync, no
+  // proration needed, same as if the room had been empty.
   const existingOccupant = room?.tenants[0];
-  if (existingOccupant) {
-    const syncDate = nextAnchorOccurrence(
-      existingOccupant.rentCycleAnchor ?? existingOccupant.joinDate,
-      tenant.joinDate
-    );
+  const existingAnchor = existingOccupant ? (existingOccupant.rentCycleAnchor ?? existingOccupant.joinDate) : null;
+  const alreadyAligned = existingAnchor && new Date(existingAnchor).getUTCDate() === tenant.joinDate.getUTCDate();
+
+  if (existingOccupant && existingAnchor && !alreadyAligned) {
+    const syncDate = nextAnchorOccurrence(existingAnchor, tenant.joinDate);
     await generateSyncedFirstRentCharge(actor, { id: tenant.id, joinDate: tenant.joinDate, rentAmount: tenant.rentAmount }, syncDate);
     await prisma.tenant.update({ where: { id: tenant.id }, data: { rentCycleAnchor: syncDate } });
   } else {
@@ -192,6 +195,20 @@ export async function createTenant(actor: string, input: TenantInput, agreement:
       date: input.joinDate,
       mode: input.depositMethod,
       note: "Advance payment at joining",
+    });
+  }
+
+  if (input.depositAmount > 0) {
+    await addLedgerEntry(actor, {
+      tenantId: tenant.id,
+      type: "DEPOSIT",
+      amount: input.depositAmount,
+      date: input.joinDate,
+      mode: input.depositMethod,
+      note:
+        input.depositMethod === "CHEQUE" && input.depositChequeNumber
+          ? `Security deposit · cheque #${input.depositChequeNumber}${input.depositChequeBank ? ` · ${input.depositChequeBank}` : ""}`
+          : "Security deposit at joining",
     });
   }
 

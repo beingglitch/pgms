@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MessageCircle, Mail, Copy, Plus, Zap } from "lucide-react";
 import { getTenantDues, addManualCharge } from "@/app/actions/charges";
-import { closeElectricityReading, getOpenReadingForRoom } from "@/app/actions/electricity";
+import { recordElectricityCharge } from "@/app/actions/electricity";
+import { useElectricityFields, ElectricityReadingFields } from "@/components/electricity-fields";
 import { recordReminderSent } from "@/app/actions/reminders";
 import { buildDuesMessage, type Signature } from "@/lib/messages";
 import { waLink, mailtoLink } from "@/lib/messaging";
@@ -17,7 +18,6 @@ import { useManager } from "@/lib/manager-context";
 import { toast } from "sonner";
 
 type TenantDues = Awaited<ReturnType<typeof getTenantDues>>;
-type OpenReading = Awaited<ReturnType<typeof getOpenReadingForRoom>>;
 
 /**
  * The one place a dues reminder gets composed and sent.
@@ -56,9 +56,8 @@ export function SendDuesReminderDialog({
   const [extraDescription, setExtraDescription] = useState("");
   const [extraAmount, setExtraAmount] = useState("");
   const [addingExtra, setAddingExtra] = useState(false);
-  const [openReading, setOpenReading] = useState<OpenReading>(null);
-  const [endReadingInput, setEndReadingInput] = useState("");
   const [closingReading, setClosingReading] = useState(false);
+  const elec = useElectricityFields(roomId, open, todayISO());
 
   // Reset the form the moment the dialog opens. Adjusted during render, from
   // a prop change, rather than in an effect, which is reserved below for the
@@ -70,8 +69,6 @@ export function SendDuesReminderDialog({
       setDues(null);
       setExtraDescription("");
       setExtraAmount("");
-      setOpenReading(null);
-      setEndReadingInput("");
     }
   }
 
@@ -88,31 +85,26 @@ export function SendDuesReminderDialog({
     getTenantDues(tenantId).then((result) => {
       if (active) setDues(result);
     });
-    if (roomId) {
-      getOpenReadingForRoom(roomId).then((result) => {
-        if (active) setOpenReading(result);
-      });
-    }
     return () => {
       active = false;
     };
-  }, [open, tenantId, roomId]);
+  }, [open, tenantId]);
 
   async function closeReading() {
-    if (!openReading) return;
-    const endReading = Number(endReadingInput);
-    if (!(endReading >= Number(openReading.startReading))) {
-      return toast.error("The current reading must be at least the starting reading.");
-    }
+    if (!elec.room || !elec.estimate) return toast.error("Enter valid readings.");
 
     setClosingReading(true);
-    const result = await closeElectricityReading(manager, openReading.id, endReading, todayISO());
+    const result = await recordElectricityCharge(manager, {
+      roomId: roomId!,
+      startReading: Number(elec.startReading),
+      endReading: Number(elec.endReading),
+      startDate: elec.room.openReading ? undefined : elec.startDateInput,
+      dueDate: todayISO(),
+    });
     setClosingReading(false);
 
     if (!result) return toast.error("Couldn't close that reading.");
 
-    setOpenReading(null);
-    setEndReadingInput("");
     await refresh();
     toast.success(`Electricity charge added: ${result.units} units`);
   }
@@ -163,7 +155,7 @@ export function SendDuesReminderDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-h-[85vh] overflow-x-hidden overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Send reminder to {tenantName}</DialogTitle>
         </DialogHeader>
@@ -185,27 +177,23 @@ export function SendDuesReminderDialog({
           </div>
         )}
 
-        {openReading && (
+        {roomId && (
           <div className="space-y-2 rounded-xl border border-border bg-muted/30 p-3">
             <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">
-              <Zap className="h-3.5 w-3.5" /> Close out the meter reading
+              <Zap className="h-3.5 w-3.5" /> Bill electricity
             </p>
-            <p className="text-xs text-muted-foreground">
-              Started at {Number(openReading.startReading)} on {new Date(openReading.startDate).toLocaleDateString("en-IN")}.
-              Enter the current number to bill this room&apos;s electricity and fold it into the reminder below.
-            </p>
-            <div className="flex gap-2">
-              <Input
-                type="number"
-                placeholder="Current reading"
-                value={endReadingInput}
-                onChange={(e) => setEndReadingInput(e.target.value)}
-                className="flex-1"
-              />
-              <Button size="sm" variant="secondary" onClick={closeReading} disabled={closingReading || !endReadingInput}>
+            <ElectricityReadingFields fields={elec} />
+            {elec.room && (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={closeReading}
+                disabled={closingReading || !elec.estimate}
+                className="w-full"
+              >
                 Add charge
               </Button>
-            </div>
+            )}
           </div>
         )}
 
@@ -233,7 +221,9 @@ export function SendDuesReminderDialog({
           </div>
         </div>
 
-        <div className="whitespace-pre-wrap rounded-lg border border-border bg-muted/40 p-3 text-sm">{fullMessage}</div>
+        <div className="whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/40 p-3 text-sm">
+          {fullMessage}
+        </div>
 
         <div className="flex flex-col gap-2 pt-1">
           {phone ? (
