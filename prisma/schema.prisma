@@ -43,18 +43,6 @@ enum ExpenseFrequency {
   YEARLY
 }
 
-/// How a room's total rent is divided between the people living in it.
-/// BY_CAPACITY  — room rent / number of beds. Each tenant pays a stable per-bed
-///                rate and an empty bed is the owner's loss, not the tenants'.
-/// BY_OCCUPANTS — room rent / people currently living there. Rent goes up for
-///                everyone when someone moves out.
-/// CUSTOM       — ignore the room rent, use each tenant's own amount.
-enum SplitMode {
-  BY_CAPACITY
-  BY_OCCUPANTS
-  CUSTOM
-}
-
 enum ChargeType {
   RENT
   ELECTRICITY
@@ -76,8 +64,6 @@ model PgInfo {
 
   /// Window the dashboard "due soon" counter looks ahead by.
   dueSoonDays      Int       @default(7)
-  /// Fallback split for rooms and floors that don't override it.
-  defaultSplitMode SplitMode @default(BY_CAPACITY)
   /// scrypt hash of the owner's password. Empty until first setup.
   passwordHash     String    @default("")
 }
@@ -86,8 +72,6 @@ model Floor {
   id        String     @id @default(cuid())
   name      String
   order     Int        @default(0)
-  /// Overrides the PG default for every room on this floor.
-  splitMode SplitMode?
   rooms     Room[]
   createdAt DateTime   @default(now())
 
@@ -99,12 +83,11 @@ model Room {
   floor   Floor  @relation(fields: [floorId], references: [id], onDelete: Cascade)
   floorId String
   number  String
-  /// Number of beds — 1 single, 2 double, 3 triple, and so on.
+  /// Number of beds: 1 single, 2 double, 3 triple, and so on.
   capacity Int    @default(1)
-  /// Rent for the whole room. Divided between occupants per splitMode.
+  /// Rent for the whole room, split evenly across whoever currently lives
+  /// there.
   rentAmount Decimal @db.Decimal(10, 2) @default(0)
-  /// Overrides the floor and PG defaults for this room only.
-  splitMode SplitMode?
   note      String?
   createdAt DateTime   @default(now())
 
@@ -138,6 +121,12 @@ model Tenant {
   depositChequeBank   String?
 
   joinDate      DateTime
+  /// Overrides joinDate as the anchor for future rent cycles. Set when this
+  /// tenant moved into a room that already had someone in it: their first
+  /// charge is pro-rated up to the existing roommate's own due-day, and every
+  /// cycle after that is anchored here instead, so the room settles onto one
+  /// shared due date rather than two.
+  rentCycleAnchor DateTime?
   pan           String?
   idProofType   String  @default("Aadhaar")
   idProofNumber String?
@@ -193,17 +182,22 @@ model Charge {
   /// Set when the charge was generated from a meter reading.
   sourceBill   ElectricityBill? @relation(fields: [sourceBillId], references: [id], onDelete: Cascade)
   sourceBillId String?
-  /// Written off — still shown for the record, but not counted as owed.
+  /// Written off, still shown for the record, but not counted as owed.
   waived      Boolean    @default(false)
   createdBy   String?
   createdAt   DateTime   @default(now())
 
   allocations Allocation[]
 
-  /// Makes double-billing the same tenant for the same cycle impossible at
-  /// the database level; the generator relies on this via skipDuplicates
-  /// instead of racily querying-then-filtering in application code.
-  @@unique([tenantId, period, type])
+  /// Double-billing the same tenant for the same rent cycle is impossible at
+  /// the database level: a partial unique index on (tenantId, period) WHERE
+  /// type = 'RENT', not expressible in this schema syntax, so it lives only
+  /// in migration 20260810160000_rent_charge_unique_rent_only and is NOT
+  /// regenerated from this file. It deliberately excludes ELECTRICITY/OTHER/
+  /// LAUNDRY: manual charges and multiple meter readings in one month are
+  /// legitimately allowed to repeat a (tenantId, period, type) combination.
+  /// A future `prisma migrate diff` against this schema will try to drop it
+  /// as drift; don't let it, or hand-edit the generated migration to keep it.
   @@index([tenantId, period])
   @@index([dueDate])
   @@index([type])
@@ -286,7 +280,7 @@ model ElectricityBill {
   /// Null means this reading is open: started (with a starting number and a
   /// proof photo, typically captured at onboarding), but not yet closed out
   /// with a current number. Every place that reports totals or seeds the
-  /// next reading's starting value must exclude open rows explicitly —
+  /// next reading's starting value must exclude open rows explicitly,
   /// they're not "zero units", they're "not billed yet".
   endReading Decimal?  @db.Decimal(10, 2)
   endDate    DateTime?

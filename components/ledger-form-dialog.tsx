@@ -145,17 +145,19 @@ export function LedgerFormDialog({
               </Select>
             </div>
           )}
-          <div>
-            <Label className="mb-1">Type</Label>
-            <Select items={TYPE_ITEMS} value={type} onValueChange={(v) => v && selectType(v as typeof type)}>
-              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="RENT">Rent</SelectItem>
-                <SelectItem value="DEPOSIT">Deposit</SelectItem>
-                <SelectItem value="OTHER">Other</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          {outstandingAmount === undefined && (
+            <div>
+              <Label className="mb-1">Type</Label>
+              <Select items={TYPE_ITEMS} value={type} onValueChange={(v) => v && selectType(v as typeof type)}>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="RENT">Rent</SelectItem>
+                  <SelectItem value="DEPOSIT">Deposit</SelectItem>
+                  <SelectItem value="OTHER">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div>
             <Label className="mb-1">Amount</Label>
             {type === "RENT" ? (

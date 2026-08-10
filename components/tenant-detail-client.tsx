@@ -5,40 +5,31 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
-  IndianRupee,
-  BellRing,
+  ChevronDown,
+  ChevronRight,
   MessageCircle,
   Pencil,
   LogOut,
   Trash2,
   FileText,
-  History,
-  Zap,
   CreditCard,
   Car,
   MapPin,
   Phone,
-  CalendarClock,
   Receipt as ReceiptIcon,
 } from "lucide-react";
 import { Amount, KhataRow, Panel, SectionHeading } from "@/components/khata";
-import { inr, fmtDate, paymentMethodLabel, todayISO } from "@/lib/format";
-import { CHARGE_TYPE_LABELS, chargeOutstanding, chargePaid, summariseCharges } from "@/lib/charges";
+import { BackButton } from "@/components/back-button";
+import { inr, fmtDate, dateISO, paymentMethodLabel, todayISO } from "@/lib/format";
+import { CHARGE_TYPE_LABELS, chargeOutstanding, chargePaid, num, summariseCharges } from "@/lib/charges";
 import { type Signature } from "@/lib/messages";
-import { deleteTenant, getTenant, giveNotice, cancelNotice } from "@/app/actions/tenants";
+import { deleteTenant, getTenant, cancelNotice } from "@/app/actions/tenants";
 import { deleteElectricityBill } from "@/app/actions/electricity";
 import { useManager } from "@/lib/manager-context";
 import { TenantFormDialog } from "@/components/tenant-form-dialog";
 import { CheckoutDialog } from "@/components/checkout-dialog";
-import { LedgerFormDialog } from "@/components/ledger-form-dialog";
-import { ReminderFormDialog } from "@/components/reminder-form-dialog";
-import { AgreementFormDialog } from "@/components/agreement-form-dialog";
 import { ChargeFormDialog } from "@/components/charge-form-dialog";
-import { MeterReadingDialog } from "@/components/meter-reading-dialog";
 import { SendMessageDialog } from "@/components/send-message-dialog";
 import { SendDuesReminderDialog } from "@/components/send-dues-reminder-dialog";
 import { toast } from "sonner";
@@ -60,13 +51,7 @@ export function TenantDetailClient({
   const { manager } = useManager();
   const [editOpen, setEditOpen] = useState(false);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
-  const [payOpen, setPayOpen] = useState(false);
-  const [remOpen, setRemOpen] = useState(false);
   const [chargeOpen, setChargeOpen] = useState(false);
-  const [agreementOpen, setAgreementOpen] = useState(false);
-  const [electricityOpen, setElectricityOpen] = useState(false);
-  const [noticeOpen, setNoticeOpen] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [shareMsg, setShareMsg] = useState<{ title: string; subject: string; message: string } | null>(null);
   const [duesReminderOpen, setDuesReminderOpen] = useState(false);
@@ -110,6 +95,7 @@ export function TenantDetailClient({
 
   return (
     <div className="space-y-4">
+      <BackButton fallbackHref="/tenants" />
       <Panel>
         <div className="mb-4 flex items-center gap-4">
           <Avatar className="h-16 w-16">
@@ -210,27 +196,18 @@ export function TenantDetailClient({
           <div className="mb-4 flex gap-2">
             {tenant.aadhaarFrontUrl && (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={tenant.aadhaarFrontUrl} alt="Aadhaar front" className="h-16 w-24 rounded-lg border border-border object-cover" />
+              <img src={tenant.aadhaarFrontUrl} alt={`${tenant.idProofType} front`} className="h-16 w-24 rounded-lg border border-border object-cover" />
             )}
             {tenant.aadhaarBackUrl && (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={tenant.aadhaarBackUrl} alt="Aadhaar back" className="h-16 w-24 rounded-lg border border-border object-cover" />
+              <img src={tenant.aadhaarBackUrl} alt={`${tenant.idProofType} back`} className="h-16 w-24 rounded-lg border border-border object-cover" />
             )}
           </div>
         )}
 
         <div className="mb-4 flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => setPayOpen(true)}>
-            <IndianRupee className="h-3.5 w-3.5" /> Record payment
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => setElectricityOpen(true)}>
-            <Zap className="h-3.5 w-3.5" /> Meter reading
-          </Button>
           <Button size="sm" variant="secondary" onClick={() => setChargeOpen(true)}>
             <ReceiptIcon className="h-3.5 w-3.5" /> Add charge
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => setRemOpen(true)}>
-            <BellRing className="h-3.5 w-3.5" /> Add reminder
           </Button>
           {openCharges.length > 0 && (
             <Button size="sm" variant="outline" onClick={() => setDuesReminderOpen(true)}>
@@ -240,11 +217,6 @@ export function TenantDetailClient({
           <Button size="sm" variant="outline" onClick={() => setEditOpen(true)}>
             <Pencil className="h-3.5 w-3.5" /> Edit details
           </Button>
-          {tenant.status === "ACTIVE" && !tenant.expectedVacateDate && (
-            <Button size="sm" variant="outline" onClick={() => setNoticeOpen(true)}>
-              <CalendarClock className="h-3.5 w-3.5" /> Give notice
-            </Button>
-          )}
           {tenant.status === "ACTIVE" && (
             <Button size="sm" variant="outline" onClick={() => setCheckoutOpen(true)}>
               <LogOut className="h-3.5 w-3.5" /> Checkout
@@ -258,7 +230,7 @@ export function TenantDetailClient({
         {currentAgreement && (
           <div className="mb-4 rounded-xl border border-border bg-muted/30 p-3">
             <p className="flex items-center gap-1 text-sm font-semibold">
-              <FileText className="h-3.5 w-3.5" /> Onboarding agreement · v{currentAgreement.version}
+              <FileText className="h-3.5 w-3.5" /> Onboarding agreement
             </p>
             <p className="text-xs text-muted-foreground">Effective {fmtDate(currentAgreement.effectiveDate)}</p>
             <div className="mt-1 space-y-0.5 text-xs">
@@ -271,10 +243,10 @@ export function TenantDetailClient({
                 {currentAgreement.laundryChargeable ? `${inr(currentAgreement.laundryCharge)}/month` : "Included"}
               </p>
             </div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" onClick={() => setAgreementOpen(true)}>
-                <Pencil className="h-3 w-3" /> Revise agreement
-              </Button>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Change any of these from Edit details below, no separate revision.
+            </p>
+            <div className="mt-2">
               <Button
                 size="sm"
                 variant="outline"
@@ -282,11 +254,6 @@ export function TenantDetailClient({
               >
                 <MessageCircle className="h-3 w-3" /> Share agreement
               </Button>
-              {tenant.agreements.length > 1 && (
-                <Button size="sm" variant="outline" onClick={() => setHistoryOpen(true)}>
-                  <History className="h-3 w-3" /> History ({tenant.agreements.length - 1})
-                </Button>
-              )}
             </div>
           </div>
         )}
@@ -294,33 +261,15 @@ export function TenantDetailClient({
         {openCharges.length > 0 && (
           <div className="mb-4">
             <SectionHeading>Open charges</SectionHeading>
-            {openCharges.map((c) => {
-              const outstanding = chargeOutstanding(c);
-              const paid = chargePaid(c);
-              const late = new Date(c.dueDate).toISOString().slice(0, 10) < todayISO();
-              return (
-                <KhataRow
-                  key={c.id}
-                  className="py-2"
-                  amount={
-                    <div className="text-right">
-                      <Amount value={outstanding} tone="owed" size="sm" />
-                      {paid > 0 && <p className="text-[11px] text-muted-foreground">{inr(paid)} paid</p>}
-                    </div>
-                  }
-                >
-                  <p className="truncate text-sm">
-                    <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                      {CHARGE_TYPE_LABELS[c.type]}
-                    </span>{" "}
-                    {c.description}
-                  </p>
-                  <p className={`text-[11px] ${late ? "font-semibold text-ledger" : "text-muted-foreground"}`}>
-                    {late ? "Overdue since" : "Due"} {fmtDate(c.dueDate)}
-                  </p>
-                </KhataRow>
-              );
-            })}
+            {Object.entries(
+              openCharges.reduce<Record<string, typeof openCharges>>((groups, c) => {
+                const key = dateISO(c.dueDate);
+                (groups[key] ??= []).push(c);
+                return groups;
+              }, {})
+            )
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([dueDate, charges]) => <ChargeDueGroup key={dueDate} dueDate={dueDate} charges={charges} />)}
           </div>
         )}
 
@@ -384,45 +333,23 @@ export function TenantDetailClient({
         open={editOpen}
         onOpenChange={setEditOpen}
         initial={{ ...tenant, rentAmount: Number(tenant.rentAmount), depositAmount: Number(tenant.depositAmount), joinDate: tenant.joinDate.toISOString().slice(0, 10) } as never}
-      />
-      <CheckoutDialog open={checkoutOpen} onOpenChange={setCheckoutOpen} tenant={tenant} />
-      <LedgerFormDialog
-        open={payOpen}
-        onOpenChange={setPayOpen}
-        tenants={[tenant]}
-        fixedTenantId={tenant.id}
-        defaultAmount={Number(tenant.rentAmount)}
-      />
-      <ReminderFormDialog
-        open={remOpen}
-        onOpenChange={setRemOpen}
-        tenants={[tenant]}
-        fixedTenantId={tenant.id}
-        defaultAmount={Number(tenant.rentAmount)}
-      />
-      <ChargeFormDialog open={chargeOpen} onOpenChange={setChargeOpen} tenantId={tenant.id} tenantName={tenant.name} />
-      <MeterReadingDialog
-        key={electricityOpen ? "open" : "closed"}
-        open={electricityOpen}
-        onOpenChange={setElectricityOpen}
-        tenantId={tenant.roomId ? undefined : tenant.id}
-        roomId={tenant.roomId ?? undefined}
-        occupants={tenant.roomId ? [{ id: tenant.id, name: tenant.name }] : undefined}
-        defaultRate={electricityRate}
-        lastReading={
-          // Legacy per-tenant bills (no room) are always created start+end
-          // together, so this is never actually an open reading.
-          tenant.electricityBills[0]
+        electricityRatePerUnit={electricityRate}
+        currentAgreement={
+          currentAgreement
             ? {
-                endReading: Number(tenant.electricityBills[0].endReading),
-                endDate: tenant.electricityBills[0].endDate!.toISOString(),
+                electricityRate: Number(currentAgreement.electricityRate),
+                facilities: (currentAgreement.facilities as { name: string; amount: number }[]) || [],
+                depositRefundable: currentAgreement.depositRefundable,
+                laundryChargeable: currentAgreement.laundryChargeable,
+                laundryCharge: Number(currentAgreement.laundryCharge),
+                note: currentAgreement.note || "",
+                photoUrl: currentAgreement.photoUrl || "",
               }
             : null
         }
       />
-      {currentAgreement && (
-        <AgreementFormDialog open={agreementOpen} onOpenChange={setAgreementOpen} tenantId={tenant.id} current={currentAgreement} />
-      )}
+      <CheckoutDialog open={checkoutOpen} onOpenChange={setCheckoutOpen} tenant={tenant} />
+      <ChargeFormDialog open={chargeOpen} onOpenChange={setChargeOpen} tenantId={tenant.id} tenantName={tenant.name} />
       {shareMsg && (
         <SendMessageDialog
           open={!!shareMsg}
@@ -453,37 +380,6 @@ export function TenantDetailClient({
         />
       )}
 
-      <NoticeDialog
-        open={noticeOpen}
-        onOpenChange={setNoticeOpen}
-        tenantId={tenant.id}
-        manager={manager}
-        onDone={() => router.refresh()}
-      />
-
-      {historyOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setHistoryOpen(false)}>
-          <div
-            className="max-h-[80vh] w-full max-w-md space-y-3 overflow-y-auto rounded-2xl border border-border bg-background p-4 shadow-card"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="font-display text-lg font-semibold">Agreement history</p>
-            {tenant.agreements.slice(1).map((h) => (
-              <div key={h.id} className="rounded-lg border border-border bg-muted/30 p-3 text-xs">
-                <p className="font-semibold">v{h.version} · effective {fmtDate(h.effectiveDate)}</p>
-                <p className="text-muted-foreground">
-                  Rent {inr(h.rentAmount)} · Deposit {inr(h.depositAmount)} · Electricity {inr(h.electricityRate)}/unit
-                </p>
-                {h.changeNote && <p className="mt-1">Reason: {h.changeNote}</p>}
-                <p className="mt-1 text-muted-foreground">
-                  Changed by {h.changedBy} on {fmtDate(h.createdAt)}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setConfirmDelete(false)}>
           <div
@@ -509,57 +405,62 @@ export function TenantDetailClient({
   );
 }
 
-function NoticeDialog({
-  open,
-  onOpenChange,
-  tenantId,
-  manager,
-  onDone,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  tenantId: string;
-  manager: string;
-  onDone: () => void;
-}) {
-  const [noticeDate, setNoticeDate] = useState(todayISO());
-  const [vacateDate, setVacateDate] = useState("");
-  const [busy, setBusy] = useState(false);
+type ChargeRow = TenantDetail["charges"][number];
 
-  async function save() {
-    if (!vacateDate) return toast.error("Pick the date they expect to leave.");
-    setBusy(true);
-    await giveNotice(manager, tenantId, { noticeDate, expectedVacateDate: vacateDate });
-    setBusy(false);
-    toast.success("Notice recorded");
-    onOpenChange(false);
-    onDone();
-  }
+/**
+ * One row per due date, collapsed to the cumulative total (it's usually all
+ * of a cycle's charges landing the same day, rent plus whatever else), with
+ * the individual charges available a click away instead of cluttering the
+ * default view.
+ */
+function ChargeDueGroup({ dueDate, charges }: { dueDate: string; charges: ChargeRow[] }) {
+  const [open, setOpen] = useState(false);
+  const late = dueDate < todayISO();
+  const totalOutstanding = charges.reduce((s, c) => s + chargeOutstanding(c), 0);
+  const totalPaid = charges.reduce((s, c) => s + chargePaid(c), 0);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Record notice to vacate</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          <div>
-            <Label className="mb-1.5">Notice given on</Label>
-            <Input type="date" value={noticeDate} onChange={(e) => setNoticeDate(e.target.value)} />
-          </div>
-          <div>
-            <Label className="mb-1.5">Expected to leave by</Label>
-            <Input type="date" value={vacateDate} onChange={(e) => setVacateDate(e.target.value)} />
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Shows up on the dashboard as an upcoming vacancy so you can plan the next tenant and the deposit refund.
-          </p>
-          <Button onClick={save} disabled={busy} className="w-full">
-            Save notice
-          </Button>
+    <div className="border-b border-border/70 last:border-b-0">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-3 py-2.5 text-left"
+      >
+        <span className="flex items-center gap-1.5 text-sm">
+          {open ? (
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          )}
+          <span className={late ? "font-semibold text-ledger" : ""}>
+            {late ? "Overdue since" : "Due"} {fmtDate(dueDate)}
+          </span>
+          <span className="text-xs text-muted-foreground">
+            ({charges.length} charge{charges.length === 1 ? "" : "s"})
+          </span>
+        </span>
+        <Amount value={totalOutstanding} tone="owed" size="sm" />
+      </button>
+
+      {open && (
+        <div className="pb-2.5 pl-5">
+          {charges.map((c) => (
+            <KhataRow key={c.id} className="py-1.5" amount={<Amount value={num(c.amount)} tone="owed" size="sm" />}>
+              <p className="truncate text-sm">
+                <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                  {CHARGE_TYPE_LABELS[c.type]}
+                </span>{" "}
+                {c.description}
+              </p>
+            </KhataRow>
+          ))}
+          {totalPaid > 0 && (
+            <KhataRow className="py-1.5" amount={<span className="khata-amount text-sm text-positive">− {inr(totalPaid)}</span>}>
+              <p className="text-xs font-semibold text-positive">Partially paid</p>
+            </KhataRow>
+          )}
         </div>
-      </DialogContent>
-    </Dialog>
+      )}
+    </div>
   );
 }
 

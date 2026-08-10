@@ -1,4 +1,16 @@
-import { splitEvenly, rentShare, effectiveRent, planAllocations, summariseCharges, addCalendarMonths, pendingRentCycles, resolveSplitMode } from "@/lib/charges";
+import {
+  splitEvenly,
+  rentShare,
+  effectiveRent,
+  planAllocations,
+  summariseCharges,
+  addCalendarMonths,
+  pendingRentCycles,
+  nextAnchorOccurrence,
+  proratedRent,
+  splitByWeights,
+  roomOccupantWeights,
+} from "@/lib/charges";
 
 let fails = 0;
 function check(label: string, actual: unknown, expected: unknown) {
@@ -14,22 +26,68 @@ check("split 1000/2", splitEvenly(1000, 2), [500, 500]);
 check("split 0 parts", splitEvenly(1000, 0), []);
 check("split 1234.56/7 sums", Math.round(splitEvenly(1234.56, 7).reduce((a, b) => a + b, 0) * 100) / 100, 1234.56);
 
-// A triple room at 24000: by capacity each bed is 8000 regardless of vacancy.
-const triple = { rentAmount: 24000, capacity: 3, splitMode: null, floor: null };
-check("triple by capacity, 2 living there", rentShare(triple, 2, "BY_CAPACITY"), 8000);
-check("triple by occupants, 2 living there", rentShare(triple, 2, "BY_OCCUPANTS"), 12000);
-check("triple by occupants, empty", rentShare(triple, 0, "BY_OCCUPANTS"), 24000);
-
-// Room override beats the property default; floor sits between.
-check("room override wins", resolveSplitMode({ splitMode: "CUSTOM", floor: { splitMode: "BY_OCCUPANTS" } }, "BY_CAPACITY"), "CUSTOM");
-check("floor beats property", resolveSplitMode({ splitMode: null, floor: { splitMode: "BY_OCCUPANTS" } }, "BY_CAPACITY"), "BY_OCCUPANTS");
-check("property default applies", resolveSplitMode({ splitMode: null, floor: { splitMode: null } }, "BY_CAPACITY"), "BY_CAPACITY");
+// A triple room at 24000: split by capacity, fixed regardless of who's
+// actually living there right now.
+const triple = { rentAmount: 24000, capacity: 3 };
+check("triple, per bed", rentShare(triple), 8000);
+check("double, per bed", rentShare({ rentAmount: 10000, capacity: 2 }), 5000);
+check("single, per bed", rentShare({ rentAmount: 10000, capacity: 1 }), 10000);
 
 // Rent resolution order.
-check("per-tenant override wins", effectiveRent({ rentAmount: 5000, rentOverride: 6500, room: { ...triple, tenants: [{ id: "a" }] } }, "BY_CAPACITY"), 6500);
-check("room split used", effectiveRent({ rentAmount: 5000, rentOverride: null, room: { ...triple, tenants: [{ id: "a" }, { id: "b" }] } }, "BY_CAPACITY"), 8000);
-check("no room -> own amount", effectiveRent({ rentAmount: 5000, rentOverride: null, room: null }, "BY_CAPACITY"), 5000);
-check("CUSTOM mode -> own amount", effectiveRent({ rentAmount: 5000, rentOverride: null, room: { ...triple, splitMode: "CUSTOM", tenants: [] } }, "BY_CAPACITY"), 5000);
+check("per-tenant override wins", effectiveRent({ rentAmount: 5000, rentOverride: 6500, room: triple }), 6500);
+check("room split used", effectiveRent({ rentAmount: 5000, rentOverride: null, room: triple }), 8000);
+check("no room -> own amount", effectiveRent({ rentAmount: 5000, rentOverride: null, room: null }), 5000);
+
+// A new roommate's first cycle lands on the existing tenant's due-day.
+check(
+  "next anchor occurrence, later this month",
+  nextAnchorOccurrence("2026-08-05", "2026-08-01").toISOString().slice(0, 10),
+  "2026-08-05"
+);
+check(
+  "next anchor occurrence, rolls to next month",
+  nextAnchorOccurrence("2026-08-05", "2026-08-20").toISOString().slice(0, 10),
+  "2026-09-05"
+);
+check(
+  "next anchor occurrence, short month clamp",
+  nextAnchorOccurrence("2026-01-31", "2026-02-20").toISOString().slice(0, 10),
+  "2026-02-28"
+);
+
+// Joined the 20th, room's existing due-day is the 5th: 16 days pro-rated
+// off a flat 30-day month, at the room's per-bed rate.
+check("prorated rent, 16 days of 5000/mo", proratedRent(5000, 16), 2666.67);
+check("prorated rent, whole month", proratedRent(5000, 30), 5000);
+
+// splitByWeights is proportional, not even, and still exact to the paisa.
+check("split by weights 2:1", splitByWeights(300, [2, 1]), [200, 100]);
+check("split by weights sums exactly", splitByWeights(1000, [1, 1, 1]).reduce((a, b) => a + b, 0), 1000);
+check("split by weights, zero weight gets zero", splitByWeights(500, [1, 0]), [500, 0]);
+
+// Room electricity split when a roommate joins partway through the reading
+// period: whoever was already there pays the full pre-arrival segment plus
+// half the shared segment, the new roommate pays only half the shared one.
+const roomWeights = roomOccupantWeights(
+  [
+    { id: "existing", joinDate: "2026-01-01" },
+    { id: "newcomer", joinDate: "2026-08-20" },
+  ],
+  "2026-08-01",
+  "2026-09-05"
+);
+const roomShares = splitByWeights(3500, [roomWeights.get("existing")!, roomWeights.get("newcomer")!]);
+check(
+  "existing occupant pays full pre-arrival + half shared",
+  roomShares[0] > roomShares[1] * 2,
+  true
+);
+check("room shares sum to the bill", roomShares.reduce((a, b) => a + b, 0), 3500);
+check(
+  "sole occupant for the whole period gets the whole bill",
+  splitByWeights(1000, [...roomOccupantWeights([{ id: "solo", joinDate: "2026-01-01" }], "2026-08-01", "2026-08-31").values()]),
+  [1000]
+);
 
 // Partial payment: 5000 against rent 8000 + electricity 500, oldest first.
 const charges = [

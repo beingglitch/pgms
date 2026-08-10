@@ -6,7 +6,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { addManualCharge } from "@/app/actions/charges";
 import { useManager } from "@/lib/manager-context";
 import { todayISO } from "@/lib/format";
@@ -72,21 +71,6 @@ export function ChargeFormDialog({
                 {preset.label}
               </button>
             ))}
-          </div>
-
-          <div>
-            <Label className="mb-1.5">Type</Label>
-            <Select value={type} onValueChange={(v) => setType(v as ChargeType)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="RENT">Rent</SelectItem>
-                <SelectItem value="ELECTRICITY">Electricity</SelectItem>
-                <SelectItem value="LAUNDRY">Laundry</SelectItem>
-                <SelectItem value="OTHER">Other</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
 
           <div>

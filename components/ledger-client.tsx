@@ -10,6 +10,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BookOpen, IndianRupee, MessageCircle, Plus, Receipt, Search, Sparkles, X } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { LedgerFormDialog } from "@/components/ledger-form-dialog";
 import { ChargeFormDialog } from "@/components/charge-form-dialog";
 import { ReceiptDialog } from "@/components/receipt-dialog";
@@ -17,7 +18,7 @@ import { SendDuesReminderDialog } from "@/components/send-dues-reminder-dialog";
 import { Amount, EmptyState, KhataRow, PageTitle, Panel, StatTile } from "@/components/khata";
 import { deleteLedgerEntry, listLedger } from "@/app/actions/ledger";
 import { listOutstandingByTenant, waiveCharge } from "@/app/actions/charges";
-import { chargeOutstanding, chargePaid, CHARGE_TYPE_LABELS, num } from "@/lib/charges";
+import { chargeOutstanding, CHARGE_TYPE_LABELS, num } from "@/lib/charges";
 import { type Signature } from "@/lib/messages";
 import { useManager } from "@/lib/manager-context";
 import { inr, fmtDate, monthKey, initials, todayISO } from "@/lib/format";
@@ -380,7 +381,17 @@ function DueCard({
   const today = todayISO();
   const open = tenant.charges.filter((c) => chargeOutstanding(c) > 0.005);
 
+  // Paid-so-far against these still-open charges, shown as one line above
+  // the total rather than broken out per charge.
+  const allocations = open.flatMap((c) => c.allocations);
+  const totalPaid = allocations.reduce((s, a) => s + num(a.amount), 0);
+  const lastPaymentDate = allocations
+    .map((a) => a.ledgerEntry.date)
+    .reduce((latest: Date | null, d) => (!latest || new Date(d) > latest ? new Date(d) : latest), null);
+
   const roomLabel = tenant.room ? `${tenant.room.floor.name} · Room ${tenant.room.number}` : tenant.roomNumber;
+  const [confirmWaive, setConfirmWaive] = useState(false);
+  const lastCharge = open[open.length - 1];
 
   async function toggleWaive(id: string, waived: boolean) {
     await waiveCharge(manager, id, waived);
@@ -411,24 +422,13 @@ function DueCard({
 
       <div className="border-t border-border/70">
         {open.map((charge) => {
-          const outstanding = chargeOutstanding(charge);
-          const paid = chargePaid(charge);
           const late = new Date(charge.dueDate).toISOString().slice(0, 10) < today;
 
           return (
             <KhataRow
               key={charge.id}
               className="py-2.5"
-              amount={
-                <div className="text-right">
-                  <Amount value={outstanding} tone="owed" size="sm" />
-                  {paid > 0 && (
-                    <p className="text-[11px] text-muted-foreground">
-                      {inr(paid)} of {inr(num(charge.amount))} paid
-                    </p>
-                  )}
-                </div>
-              }
+              amount={<Amount value={num(charge.amount)} tone="owed" size="sm" />}
             >
               <div className="flex items-start gap-2">
                 <span className="mt-0.5 shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
@@ -438,13 +438,22 @@ function DueCard({
                   <p className="truncate text-sm">{charge.description}</p>
                   <p className={`text-[11px] ${late ? "font-semibold text-ledger" : "text-muted-foreground"}`}>
                     {late ? "Overdue since" : "Due"} {fmtDate(charge.dueDate)}
-                    {paid > 0 && <span className="ml-1 text-muted-foreground">· part paid</span>}
                   </p>
                 </div>
               </div>
             </KhataRow>
           );
         })}
+        {totalPaid > 0 && (
+          <KhataRow className="py-1.5" amount={<span className="khata-amount text-sm text-positive">− {inr(totalPaid)}</span>}>
+            <p className="text-xs font-semibold text-positive">
+              Partially paid{lastPaymentDate ? ` · ${fmtDate(lastPaymentDate)}` : ""}
+            </p>
+          </KhataRow>
+        )}
+        <KhataRow className="py-2.5" amount={<Amount value={summary.total.outstanding} tone="owed" size="sm" />}>
+          <p className="text-sm font-semibold">Total due</p>
+        </KhataRow>
       </div>
 
       <div className="mt-3 flex flex-wrap gap-2 border-t border-border/70 pt-3">
@@ -462,13 +471,47 @@ function DueCard({
         </Button>
         {open.length > 0 && (
           <button
-            onClick={() => toggleWaive(open[open.length - 1].id, true)}
+            onClick={() => setConfirmWaive(true)}
             className="ml-auto self-center text-[11px] font-semibold text-muted-foreground hover:text-foreground"
           >
             Waive last charge
           </button>
         )}
       </div>
+
+      <Dialog open={confirmWaive} onOpenChange={setConfirmWaive}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Waive this charge?</DialogTitle>
+          </DialogHeader>
+          {lastCharge && (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                <span className="font-semibold text-foreground">
+                  {CHARGE_TYPE_LABELS[lastCharge.type]} · {lastCharge.description}
+                </span>{" "}
+                for {tenant.name}, due {fmtDate(lastCharge.dueDate)}, will no longer count as owed. It stays on
+                record, marked waived, but drops out of their total due and out of anything you send them to chase.
+              </p>
+              <div className="flex gap-3">
+                <Button variant="outline" className="flex-1" onClick={() => setConfirmWaive(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  className="flex-1"
+                  onClick={() => {
+                    toggleWaive(lastCharge.id, true);
+                    setConfirmWaive(false);
+                  }}
+                >
+                  Waive {inr(chargeOutstanding(lastCharge))}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </Panel>
   );
 }

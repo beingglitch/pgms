@@ -3,24 +3,26 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "./activity";
-import { getPgInfo } from "./settings";
 import {
   CHARGE_TYPE_LABELS,
   chargeOutstanding,
   effectiveRent,
+  num,
   pendingRentCycles,
   periodLabel,
   periodOf,
   planAllocations,
-  splitEvenly,
+  proratedRent,
+  roomOccupantWeights,
+  splitByWeights,
   summariseCharges,
   type Money,
   type RoomForSplit,
 } from "@/lib/charges";
-import type { ChargeType, SplitMode } from "@/lib/generated/prisma/enums";
+import type { ChargeType } from "@/lib/generated/prisma/enums";
 
 const CHARGES_WITH_PAYMENTS = {
-  allocations: { select: { amount: true } },
+  allocations: { select: { amount: true, ledgerEntry: { select: { date: true } } } },
 } as const;
 
 function revalidateMoneyViews(tenantId?: string) {
@@ -58,9 +60,10 @@ export async function listOutstandingByTenant() {
 type TenantForBilling = {
   id: string;
   joinDate: Date;
+  rentCycleAnchor?: Date | null;
   rentAmount: Money;
   rentOverride?: Money | null;
-  room?: (RoomForSplit & { tenants?: { id: string }[] }) | null;
+  room?: RoomForSplit | null;
 };
 
 /**
@@ -68,18 +71,23 @@ type TenantForBilling = {
  * in `alreadyBilledPeriods`. Shared by the nightly catch-up (many tenants,
  * asOf = now) and onboarding (one tenant, asOf = their own join date, so only
  * their very first cycle comes back).
+ *
+ * Cycles run from rentCycleAnchor when set, joinDate otherwise: a tenant who
+ * moved into an already-occupied room has their cycle anchored to the day
+ * their first (pro-rated) charge synced up with their roommate's, not to
+ * their own move-in date.
  */
 function buildPendingRentChargeRows(
   tenant: TenantForBilling,
-  defaultSplitMode: SplitMode,
   asOf: Date,
   alreadyBilledPeriods: Set<string>,
   actor: string
 ) {
-  const amount = effectiveRent(tenant, defaultSplitMode, tenant.room?.tenants?.length);
+  const amount = effectiveRent(tenant);
   if (amount <= 0) return [];
 
-  return pendingRentCycles(tenant.joinDate, asOf, alreadyBilledPeriods).map(({ start, period }) => ({
+  const anchor = tenant.rentCycleAnchor ?? tenant.joinDate;
+  return pendingRentCycles(anchor, asOf, alreadyBilledPeriods).map(({ start, period }) => ({
     tenantId: tenant.id,
     type: "RENT" as const,
     period,
@@ -101,25 +109,16 @@ function buildPendingRentChargeRows(
  * is silently skipped via skipDuplicates rather than double-billed.
  */
 export async function generateDueRentCharges(actor: string, asOf: Date = new Date()) {
-  const pgInfo = await getPgInfo();
   const tenants = await prisma.tenant.findMany({
     where: { status: "ACTIVE" },
     include: {
-      room: {
-        include: { floor: { select: { splitMode: true } }, tenants: { where: { status: "ACTIVE" }, select: { id: true } } },
-      },
+      room: true,
       charges: { where: { type: "RENT" }, select: { period: true } },
     },
   });
 
   const rows = tenants.flatMap((tenant) =>
-    buildPendingRentChargeRows(
-      tenant,
-      pgInfo.defaultSplitMode,
-      asOf,
-      new Set(tenant.charges.map((c) => c.period)),
-      actor
-    )
+    buildPendingRentChargeRows(tenant, asOf, new Set(tenant.charges.map((c) => c.period)), actor)
   );
 
   if (rows.length === 0) return { created: 0 };
@@ -140,10 +139,42 @@ export async function generateDueRentCharges(actor: string, asOf: Date = new Dat
  * means a tenant isn't sitting at ₹0 owed for up to a day after they move in.
  */
 export async function generateFirstRentCharge(actor: string, tenant: TenantForBilling) {
-  const pgInfo = await getPgInfo();
-  const rows = buildPendingRentChargeRows(tenant, pgInfo.defaultSplitMode, tenant.joinDate, new Set(), actor);
+  const rows = buildPendingRentChargeRows(tenant, tenant.joinDate, new Set(), actor);
   if (rows.length === 0) return;
   await prisma.charge.createMany({ data: rows, skipDuplicates: true });
+}
+
+/**
+ * A tenant moving into a room that already has someone in it doesn't start
+ * their own cycle: their first charge covers only the days until the
+ * existing roommate's next due-day, so the room settles onto one shared due
+ * date instead of two. Returns the sync date the tenant's rentCycleAnchor
+ * should be set to, so every cycle after this one lands on it automatically.
+ */
+export async function generateSyncedFirstRentCharge(
+  actor: string,
+  tenant: { id: string; joinDate: Date; rentAmount: Money },
+  syncDate: Date
+) {
+  const days = Math.round((syncDate.getTime() - tenant.joinDate.getTime()) / 86400000);
+  const amount = proratedRent(num(tenant.rentAmount), days);
+  if (amount > 0) {
+    const period = periodOf(tenant.joinDate);
+    await prisma.charge.createMany({
+      data: [
+        {
+          tenantId: tenant.id,
+          type: "RENT",
+          period,
+          description: `Rent · ${periodLabel(period)} (partial, synced to room)`,
+          amount,
+          dueDate: tenant.joinDate,
+          createdBy: actor,
+        },
+      ],
+      skipDuplicates: true,
+    });
+  }
 }
 
 /**
@@ -182,7 +213,15 @@ export async function billRoomElectricity(actor: string, billId: string) {
   if (occupants.length === 0) return { created: 0 };
 
   const period = periodOf(endDate);
-  const shares = splitEvenly(billAmount, occupants.length);
+  // Weighted by days actually lived there within this reading's window, so
+  // someone who moved in partway through only pays for the days since, and
+  // whoever was already there isn't stuck splitting evenly from a date
+  // before the newcomer existed.
+  const weights = roomOccupantWeights(occupants, bill.startDate, endDate);
+  const shares = splitByWeights(
+    billAmount,
+    occupants.map((o) => weights.get(o.id) ?? 0)
+  );
   const units = billUnits;
   const roomLabel = bill.room ? `Room ${bill.room.number}` : "Room";
 

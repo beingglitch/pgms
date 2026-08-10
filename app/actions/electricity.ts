@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "./activity";
 import { billRoomElectricity } from "./charges";
-import { periodOf, round2 } from "@/lib/charges";
+import { round2 } from "@/lib/charges";
 
 /** The last *closed* reading, to seed a new reading's starting value. An open one has no end number to seed from. */
 export async function getLastReading(opts: { roomId?: string; tenantId?: string } = {}) {
@@ -20,26 +20,24 @@ export async function getLastReading(opts: { roomId?: string; tenantId?: string 
   });
 }
 
-export async function listMainMeterReadings() {
-  return prisma.electricityBill.findMany({
-    where: { isMainMeter: true, endDate: { not: null } },
-    orderBy: { endDate: "desc" },
-  });
-}
-
 /**
  * Open a room's meter reading: a starting number and a proof photo, with no
  * current number yet. Closed out later, typically from Ledger > Dues, right
  * before a reminder goes out, via closeElectricityReading.
  *
- * A no-op if the room already has any reading (open or closed) on file, so
- * this is safe to call speculatively without checking first.
+ * A no-op if the room already has an *open* reading, so this is safe to call
+ * speculatively without checking first. Past closed readings don't block a
+ * new one, once a room's meter has been reset (or every tenant it had has
+ * moved out), starting fresh is exactly the point.
  */
 export async function startElectricityReading(
   actor: string,
   input: { roomId: string; startReading: number; startDate: string; ratePerUnit: number; photoUrl?: string }
 ) {
-  const existing = await prisma.electricityBill.findFirst({ where: { roomId: input.roomId }, select: { id: true } });
+  const existing = await prisma.electricityBill.findFirst({
+    where: { roomId: input.roomId, endDate: null },
+    select: { id: true },
+  });
   if (existing) return null;
 
   const bill = await prisma.electricityBill.create({
@@ -65,6 +63,34 @@ export async function getOpenReadingForRoom(roomId: string) {
     where: { roomId, endDate: null },
     orderBy: { createdAt: "desc" },
   });
+}
+
+/**
+ * Discard a room's open reading, unbilled, so the next tenant to move in
+ * starts a clean one. Only ever touches an *open* reading, anything already
+ * closed and billed is history, not something a reset undoes.
+ */
+export async function resetElectricityReading(actor: string, roomId: string) {
+  const open = await prisma.electricityBill.findFirst({
+    where: { roomId, endDate: null },
+    include: { room: { select: { number: true } } },
+  });
+  if (!open) return null;
+
+  await prisma.electricityBill.delete({ where: { id: open.id } });
+  await logActivity(actor, "Meter reading reset", `Room ${open.room?.number ?? roomId}`);
+  revalidatePath("/rooms");
+  return open;
+}
+
+/**
+ * Automatic version of the same reset: called whenever a room's occupancy
+ * might have just dropped to zero (checkout, deletion, reassignment). A
+ * silent no-op the rest of the time, so callers don't need to check first.
+ */
+export async function resetElectricityIfRoomEmpty(actor: string, roomId: string) {
+  const stillOccupied = await prisma.tenant.count({ where: { roomId, status: "ACTIVE" } });
+  if (stillOccupied === 0) await resetElectricityReading(actor, roomId);
 }
 
 /**
@@ -99,126 +125,6 @@ export async function closeElectricityReading(actor: string, billId: string, end
   revalidatePath("/");
 
   return { units, amount, chargesCreated: result.created };
-}
-
-/**
- * How much of the building's electricity the tenants have picked up.
- *
- * The main meter covers common areas as well as rooms, so the owner's real
- * cost is what's left after the sub-meter readings have been billed on.
- */
-export async function getElectricityRecovery() {
-  const [mainReadings, tenantCharges] = await Promise.all([
-    prisma.electricityBill.findMany({
-      where: { isMainMeter: true, endDate: { not: null } },
-      orderBy: { endDate: "desc" },
-    }),
-    prisma.charge.findMany({ where: { type: "ELECTRICITY", waived: false }, select: { amount: true, period: true } }),
-  ]);
-
-  const recoveredByPeriod = new Map<string, number>();
-  for (const charge of tenantCharges) {
-    recoveredByPeriod.set(charge.period, round2((recoveredByPeriod.get(charge.period) ?? 0) + Number(charge.amount)));
-  }
-
-  const periods = mainReadings.map((reading) => {
-    // The where clause already guarantees this, but the generated type is
-    // still nullable since nullability lives on the column, not the filter.
-    const period = periodOf(reading.endDate!);
-    const gross = Number(reading.amount);
-    const recovered = recoveredByPeriod.get(period) ?? 0;
-    return {
-      id: reading.id,
-      period,
-      startDate: reading.startDate,
-      endDate: reading.endDate,
-      endReading: Number(reading.endReading),
-      units: Number(reading.units),
-      gross,
-      recovered: round2(Math.min(recovered, gross)),
-      net: round2(Math.max(gross - recovered, 0)),
-    };
-  });
-
-  return {
-    periods,
-    totals: periods.reduce(
-      (acc, p) => ({
-        gross: round2(acc.gross + p.gross),
-        recovered: round2(acc.recovered + p.recovered),
-        net: round2(acc.net + p.net),
-      }),
-      { gross: 0, recovered: 0, net: 0 }
-    ),
-  };
-}
-
-export async function addElectricityBill(
-  actor: string,
-  input: {
-    roomId?: string;
-    tenantId?: string;
-    isMainMeter?: boolean;
-    startReading: number;
-    endReading: number;
-    startDate: string;
-    endDate: string;
-    ratePerUnit: number;
-    photoUrl?: string;
-  }
-) {
-  const units = round2(input.endReading - input.startReading);
-  const amount = round2(units * input.ratePerUnit);
-
-  const bill = await prisma.electricityBill.create({
-    data: {
-      roomId: input.isMainMeter ? undefined : input.roomId,
-      tenantId: input.isMainMeter || input.roomId ? undefined : input.tenantId,
-      isMainMeter: !!input.isMainMeter,
-      startReading: input.startReading,
-      endReading: input.endReading,
-      startDate: new Date(input.startDate),
-      endDate: new Date(input.endDate),
-      units,
-      ratePerUnit: input.ratePerUnit,
-      amount,
-      photoUrl: input.photoUrl,
-      recordedBy: actor,
-    },
-    include: { room: { select: { number: true } }, tenant: { select: { name: true } } },
-  });
-
-  if (input.isMainMeter) {
-    // The full bill is what leaves the owner's pocket, so that's what the
-    // expense records. getElectricityRecovery() nets off what tenants repay.
-    await prisma.expense.create({
-      data: {
-        title: "Main meter electricity",
-        category: "Electricity (main meter)",
-        amount,
-        frequency: "ONE_TIME",
-        date: new Date(input.endDate),
-        note: `${units} units · ₹${input.ratePerUnit}/unit · ${new Date(input.startDate).toLocaleDateString("en-IN")} – ${new Date(input.endDate).toLocaleDateString("en-IN")}`,
-        recordedBy: actor,
-        sourceBillId: bill.id,
-      },
-    });
-  } else {
-    await billRoomElectricity(actor, bill.id);
-  }
-
-  await logActivity(
-    actor,
-    "Electricity reading recorded",
-    `${input.isMainMeter ? "Main meter" : bill.room ? `Room ${bill.room.number}` : bill.tenant?.name} · ${units} units · ₹${amount}`
-  );
-
-  revalidatePath("/expenses");
-  revalidatePath("/ledger");
-  revalidatePath("/rooms");
-  revalidatePath("/");
-  if (input.tenantId) revalidatePath(`/tenants/${input.tenantId}`);
-  return bill;
 }
 
 /**

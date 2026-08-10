@@ -14,12 +14,22 @@ import { ChevronRight, Sparkles, Wallet } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
-/** The last six billing months, oldest first. */
+/**
+ * The last six billing months, oldest first, anchored to the property's
+ * timezone rather than the server's. `new Date().getMonth()` reads the
+ * server's local calendar, UTC on Vercel, which briefly disagrees with IST
+ * around midnight and can hand the client a different "current month" than
+ * what the server just rendered, the exact class of bug documented on
+ * `PROPERTY_TIMEZONE` in lib/format.ts. Plain integer month arithmetic on the
+ * IST date string sidesteps that entirely.
+ */
 function recentPeriods(count = 6) {
-  const now = new Date();
+  const [year, month] = todayISO().split("-").map(Number);
   return Array.from({ length: count }, (_, i) => {
-    const d = new Date(now.getFullYear(), now.getMonth() - (count - 1 - i), 1);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const offset = month - 1 - (count - 1 - i);
+    const y = year + Math.floor(offset / 12);
+    const m = ((offset % 12) + 12) % 12;
+    return `${y}-${String(m + 1).padStart(2, "0")}`;
   });
 }
 

@@ -6,7 +6,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -16,92 +15,112 @@ import {
 } from "@/components/ui/select";
 import { PhotoUpload } from "@/components/photo-upload";
 import { useManager } from "@/lib/manager-context";
-import { createTenant, updateTenant, type TenantInput, type AgreementInput } from "@/app/actions/tenants";
+import { createTenant, updateTenant, updateAgreementFields, type TenantInput, type AgreementInput } from "@/app/actions/tenants";
 import { todayISO, inr } from "@/lib/format";
-import { Plus, X } from "lucide-react";
+import { waLink } from "@/lib/messaging";
+import { Plus, X, Download, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 import type { listRoomOptions } from "@/app/actions/rooms";
 
 type ExistingTenant = Partial<TenantInput> & { id?: string };
 type RoomOption = Awaited<ReturnType<typeof listRoomOptions>>[number];
 
+type CurrentAgreement = {
+  electricityRate: number;
+  facilities: { name: string; amount: number }[];
+  depositRefundable: boolean;
+  laundryChargeable: boolean;
+  laundryCharge: number;
+  note: string;
+  photoUrl: string;
+};
+
 export function TenantFormDialog({
   open,
   onOpenChange,
   initial,
+  currentAgreement,
   roomOptions = [],
+  electricityRatePerUnit = 8,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initial?: ExistingTenant | null;
+  /** The tenant's existing agreement, when editing: seeds the electricity/extra-charges fields instead of blank defaults. */
+  currentAgreement?: CurrentAgreement | null;
   /** Rooms with a bed free, for the onboarding-only room/bed picker. */
   roomOptions?: RoomOption[];
+  /** The property's current electricity rate, from Settings, locked into the agreement at onboarding. */
+  electricityRatePerUnit?: number;
 }) {
   const router = useRouter();
   const { manager } = useManager();
   const isNew = !initial?.id;
 
-  const [f, setF] = useState<TenantInput>({
-    name: initial?.name || "",
-    phone: initial?.phone || "",
-    email: initial?.email || "",
-    fatherName: initial?.fatherName || "",
-    motherName: initial?.motherName || "",
-    roomNumber: initial?.roomNumber || "",
-    bedNumber: initial?.bedNumber || "",
-    rentAmount: initial?.rentAmount || 0,
-    depositAmount: initial?.depositAmount || 0,
-    depositMethod: initial?.depositMethod || "CASH",
-    depositChequeNumber: initial?.depositChequeNumber || "",
-    depositChequeBank: initial?.depositChequeBank || "",
-    joinDate: initial?.joinDate || todayISO(),
-    pan: initial?.pan || "",
-    idProofType: initial?.idProofType || "Aadhaar",
-    idProofNumber: initial?.idProofNumber || "",
-    aadhaarFrontUrl: initial?.aadhaarFrontUrl || "",
-    aadhaarBackUrl: initial?.aadhaarBackUrl || "",
-    photoUrl: initial?.photoUrl || "",
-    carNumber: initial?.carNumber || "",
-    carModel: initial?.carModel || "",
-    address: initial?.address || "",
-    emergencyContact: initial?.emergencyContact || "",
-    emergencyPhone: initial?.emergencyPhone || "",
-    notes: initial?.notes || "",
-  });
+  function blankTenant(): TenantInput {
+    return {
+      name: initial?.name || "",
+      phone: initial?.phone || "",
+      email: initial?.email || "",
+      fatherName: initial?.fatherName || "",
+      motherName: initial?.motherName || "",
+      roomNumber: initial?.roomNumber || "",
+      bedNumber: initial?.bedNumber || "",
+      rentAmount: initial?.rentAmount || 0,
+      depositAmount: initial?.depositAmount || 0,
+      depositMethod: initial?.depositMethod || "CASH",
+      depositChequeNumber: initial?.depositChequeNumber || "",
+      depositChequeBank: initial?.depositChequeBank || "",
+      joinDate: initial?.joinDate || todayISO(),
+      pan: initial?.pan || "",
+      idProofType: initial?.idProofType || "College ID",
+      idProofNumber: initial?.idProofNumber || "",
+      aadhaarFrontUrl: initial?.aadhaarFrontUrl || "",
+      aadhaarBackUrl: initial?.aadhaarBackUrl || "",
+      photoUrl: initial?.photoUrl || "",
+      carNumber: initial?.carNumber || "",
+      carModel: initial?.carModel || "",
+      address: initial?.address || "",
+      emergencyContact: initial?.emergencyContact || "",
+      emergencyPhone: initial?.emergencyPhone || "",
+      notes: initial?.notes || "",
+    };
+  }
 
-  const [agreement, setAgreement] = useState<AgreementInput>({
-    roomNumber: f.roomNumber,
-    rentAmount: f.rentAmount,
-    depositAmount: f.depositAmount,
-    depositRefundable: true,
-    electricityRate: 8,
-    laundryChargeable: true,
-    laundryCharge: 300,
-    facilities: [],
-    photoUrl: "",
-    note: "",
-  });
+  function blankAgreement(rentAmount: number, depositAmount: number, roomNumber?: string): AgreementInput {
+    return {
+      roomNumber,
+      rentAmount,
+      depositAmount,
+      depositRefundable: currentAgreement?.depositRefundable ?? true,
+      electricityRate: currentAgreement?.electricityRate ?? electricityRatePerUnit,
+      laundryChargeable: currentAgreement?.laundryChargeable ?? false,
+      laundryCharge: currentAgreement?.laundryCharge ?? 0,
+      facilities: currentAgreement?.facilities ?? [],
+      photoUrl: currentAgreement?.photoUrl ?? "",
+      note: currentAgreement?.note ?? "",
+    };
+  }
+
+  const [f, setF] = useState<TenantInput>(blankTenant());
+  const [agreement, setAgreement] = useState<AgreementInput>(blankAgreement(f.rentAmount, f.depositAmount, f.roomNumber));
+  const [submitted, setSubmitted] = useState(false);
 
   const [saving, setSaving] = useState(false);
 
   // Onboarding-only bed picker. Room assignment after onboarding still goes
   // through the Rooms page; this just saves a trip for the common case of
-  // "this tenant has a bed from day one".
+  // "this tenant has a bed from day one". The bed itself is never asked for,
+  // just the first free one in whatever room is picked.
   const [pickedRoomId, setPickedRoomId] = useState<string | null>(null);
-  const [pickedBed, setPickedBed] = useState<string | null>(null);
   const [meterStartReading, setMeterStartReading] = useState("");
   const [meterStartPhotoUrl, setMeterStartPhotoUrl] = useState("");
+  const [advancePayment, setAdvancePayment] = useState("");
   const pickedRoom = roomOptions.find((r) => r.id === pickedRoomId) ?? null;
-  const availableBeds = pickedRoom
-    ? Array.from({ length: pickedRoom.capacity }, (_, i) => String(i + 1)).filter(
-        (bed) => !pickedRoom.takenBeds.includes(bed)
-      )
-    : [];
 
   function pickRoom(roomId: string | null) {
     if (!roomId) {
       setPickedRoomId(null);
-      setPickedBed(null);
       return;
     }
     const room = roomOptions.find((r) => r.id === roomId) ?? null;
@@ -109,20 +128,35 @@ export function TenantFormDialog({
     const firstFreeBed = room
       ? Array.from({ length: room.capacity }, (_, i) => String(i + 1)).find((b) => !room.takenBeds.includes(b))
       : undefined;
-    setPickedBed(firstFreeBed ?? null);
     if (room) {
       setF((s) => ({
         ...s,
         roomNumber: room.number,
         bedNumber: firstFreeBed ?? "",
-        // CUSTOM-mode rooms don't set anyone's rent, so leave whatever's typed.
-        rentAmount: room.splitModeResolved === "CUSTOM" ? s.rentAmount : room.perBedIfJoining,
+        rentAmount: room.perBed,
       }));
     }
   }
 
   function set<K extends keyof TenantInput>(key: K, value: TenantInput[K]) {
     setF((s) => ({ ...s, [key]: value }));
+  }
+
+  /** Back to a blank onboarding form, so the next "Add tenant" doesn't reopen with the last one's details. */
+  function resetForm() {
+    const blank = blankTenant();
+    setF(blank);
+    setAgreement(blankAgreement(blank.rentAmount, blank.depositAmount, blank.roomNumber));
+    setPickedRoomId(null);
+    setMeterStartReading("");
+    setMeterStartPhotoUrl("");
+    setAdvancePayment("");
+    setSubmitted(false);
+  }
+
+  function close() {
+    if (isNew) resetForm();
+    onOpenChange(false);
   }
 
   function addFacility() {
@@ -136,6 +170,34 @@ export function TenantFormDialog({
   }
   function removeFacility(i: number) {
     setAgreement((a) => ({ ...a, facilities: a.facilities.filter((_, idx) => idx !== i) }));
+  }
+
+  /** A plain-text preview of the terms, built from whatever's filled in so far. */
+  function agreementPreview() {
+    const facilitiesText = agreement.facilities
+      .filter((fac) => fac.name.trim())
+      .map((fac) => `${fac.name}: ${inr(fac.amount)}`)
+      .join(", ");
+    return [
+      `Terms for ${f.name || "the tenant"}${pickedRoom ? ` · ${pickedRoom.label}` : f.roomNumber ? ` · Room ${f.roomNumber}` : ""}:`,
+      `Monthly rent: ${inr(f.rentAmount)}`,
+      `Security deposit: ${inr(f.depositAmount)}`,
+      `Electricity: ${inr(agreement.electricityRate)} per unit`,
+      facilitiesText ? `Other charges: ${facilitiesText}` : null,
+      `Joining: ${f.joinDate}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  function downloadAgreement() {
+    const blob = new Blob([agreementPreview()], { type: "text/plain;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${f.name || "tenant"}-agreement.txt`;
+    link.click();
+    URL.revokeObjectURL(url);
   }
 
   async function submit() {
@@ -153,16 +215,29 @@ export function TenantFormDialog({
             roomId: pickedRoomId ?? undefined,
             meterStartReading: meterStartReading !== "" ? Number(meterStartReading) : undefined,
             meterStartPhotoUrl: meterStartPhotoUrl || undefined,
+            advancePayment: advancePayment !== "" ? Number(advancePayment) : undefined,
           },
           { ...agreement, roomNumber: f.roomNumber, rentAmount: f.rentAmount, depositAmount: f.depositAmount }
         );
         toast.success(pickedRoom ? `Tenant onboarded into ${pickedRoom.label}` : "Tenant onboarded");
+        router.refresh();
+        // Stay open so the download/share buttons below have something to
+        // hand over; the form itself resets once this closes.
+        setSubmitted(true);
       } else {
         await updateTenant(manager, initial!.id!, f);
+        if (currentAgreement) {
+          await updateAgreementFields(manager, initial!.id!, {
+            ...agreement,
+            roomNumber: f.roomNumber,
+            rentAmount: f.rentAmount,
+            depositAmount: f.depositAmount,
+          });
+        }
         toast.success("Tenant updated");
+        onOpenChange(false);
+        router.refresh();
       }
-      onOpenChange(false);
-      router.refresh();
     } catch {
       toast.error("Something went wrong");
     } finally {
@@ -171,12 +246,35 @@ export function TenantFormDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(o) => (o ? onOpenChange(o) : close())}>
       <DialogContent className="max-h-[92vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{isNew ? "Onboard a new tenant" : "Edit tenant"}</DialogTitle>
+          <DialogTitle>
+            {submitted ? "Tenant onboarded" : isNew ? "Onboard a new tenant" : "Edit tenant"}
+          </DialogTitle>
         </DialogHeader>
 
+        {submitted ? (
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              {f.name} is onboarded{pickedRoom ? ` into ${pickedRoom.label}` : ""}. Send them their terms now, or
+              from their profile anytime later.
+            </p>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" className="flex-1" onClick={downloadAgreement}>
+                <Download className="h-4 w-4" /> Download
+              </Button>
+              <a href={waLink(f.phone, agreementPreview())} target="_blank" rel="noreferrer" className="flex-1">
+                <Button type="button" variant="outline" className="w-full">
+                  <MessageCircle className="h-4 w-4" /> Share on WhatsApp
+                </Button>
+              </a>
+            </div>
+            <Button className="w-full" onClick={close}>
+              Done
+            </Button>
+          </div>
+        ) : (
         <div className="space-y-4">
           <div>
             <Label className="mb-1">Tenant photo</Label>
@@ -205,13 +303,17 @@ export function TenantFormDialog({
 
           {isNew && roomOptions.length > 0 && (
             <div className="rounded-xl border border-border bg-muted/30 p-3">
-              <Label className="mb-1.5">Bed (optional, assign later from Rooms if you&apos;d rather)</Label>
+              <Label className="mb-1.5">Room (optional, assign later from Rooms if you&apos;d rather)</Label>
               <Select
                 value={pickedRoomId ?? "none"}
                 onValueChange={(v) => pickRoom(v && v !== "none" ? v : null)}
               >
                 <SelectTrigger className="w-full">
-                  <SelectValue />
+                  <SelectValue>
+                    {(value: string) =>
+                      value === "none" || !value ? "No room yet" : (roomOptions.find((r) => r.id === value)?.label ?? "No room yet")
+                    }
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">No room yet</SelectItem>
@@ -224,41 +326,20 @@ export function TenantFormDialog({
               </Select>
 
               {pickedRoom && (
-                <div className="mt-3">
-                  <Label className="mb-1.5">Which bed?</Label>
-                  <div className="flex flex-wrap gap-2">
-                    {availableBeds.map((bed) => (
-                      <button
-                        key={bed}
-                        type="button"
-                        onClick={() => {
-                          setPickedBed(bed);
-                          set("bedNumber", bed);
-                        }}
-                        className={`rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors ${
-                          pickedBed === bed
-                            ? "border-primary bg-primary text-primary-foreground"
-                            : "text-muted-foreground hover:bg-muted"
-                        }`}
-                      >
-                        Bed {bed}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    {pickedRoom.splitModeResolved === "CUSTOM"
-                      ? "This room uses each tenant's own rent, set it below."
-                      : `Rent set to ${inr(pickedRoom.perBedIfJoining)}, this room's share.`}
-                  </p>
-                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Bed assigned automatically (first free one). Rent set to {inr(pickedRoom.perBed)}, this
+                  room&apos;s per-bed share.
+                  {pickedRoom.occupied > 0 &&
+                    " Their first rent charge is pro-rated up to their roommate's due-day, then billed on that same day every month after."}
+                </p>
               )}
 
-              {pickedRoom && !pickedRoom.hasMeterReading && (
+              {pickedRoom && pickedRoom.occupied === 0 && !pickedRoom.hasOpenReading && (
                 <div className="mt-3 border-t border-border/70 pt-3">
                   <Label className="mb-1.5">Starting meter reading</Label>
                   <p className="mb-2 text-xs text-muted-foreground">
-                    This room has no reading on file yet. Capture the current number and a photo as proof, so the
-                    first electricity bill has a real starting point.
+                    Nobody&apos;s living here right now, so capture the current number and a photo as proof before
+                    they move in, the first electricity bill needs a real starting point.
                   </p>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <Input
@@ -286,17 +367,38 @@ export function TenantFormDialog({
               </>
             )}
             <Field label="Monthly rent" required>
-              <Input type="number" value={f.rentAmount} onChange={(e) => set("rentAmount", Number(e.target.value))} />
+              <Input
+                type="number"
+                value={f.rentAmount === 0 ? "" : f.rentAmount}
+                onChange={(e) => set("rentAmount", e.target.value === "" ? 0 : Number(e.target.value))}
+              />
             </Field>
             <Field label="Joining date" required>
               <Input type="date" value={f.joinDate} onChange={(e) => set("joinDate", e.target.value)} />
             </Field>
+            {isNew && (
+              <Field label="Advance payment (paid on joining)">
+                <Input
+                  type="number"
+                  placeholder="0"
+                  value={advancePayment}
+                  onChange={(e) => setAdvancePayment(e.target.value)}
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Settles this month&apos;s rent. Anything short stays due on the dashboard.
+                </p>
+              </Field>
+            )}
           </div>
 
           <p className="text-xs font-bold uppercase tracking-wide text-amber-700">Security deposit</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field label="Deposit amount" required>
-              <Input type="number" value={f.depositAmount} onChange={(e) => set("depositAmount", Number(e.target.value))} />
+              <Input
+                type="number"
+                value={f.depositAmount === 0 ? "" : f.depositAmount}
+                onChange={(e) => set("depositAmount", e.target.value === "" ? 0 : Number(e.target.value))}
+              />
             </Field>
             <Field label="Taken as">
               <Select
@@ -327,13 +429,16 @@ export function TenantFormDialog({
 
           <p className="text-xs font-bold uppercase tracking-wide text-amber-700">Identity & vehicle</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="PAN number">
-              <Input value={f.pan} onChange={(e) => set("pan", e.target.value.toUpperCase())} />
-            </Field>
+            {!isNew && (
+              <Field label="PAN number">
+                <Input value={f.pan} onChange={(e) => set("pan", e.target.value.toUpperCase())} />
+              </Field>
+            )}
             <Field label="ID proof type">
               <Select value={f.idProofType} onValueChange={(v) => v && set("idProofType", v)}>
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="College ID">College ID</SelectItem>
                   <SelectItem value="Aadhaar">Aadhaar</SelectItem>
                   <SelectItem value="Passport">Passport</SelectItem>
                   <SelectItem value="Voter ID">Voter ID</SelectItem>
@@ -347,11 +452,11 @@ export function TenantFormDialog({
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
-              <Label className="mb-1">Aadhaar front</Label>
+              <Label className="mb-1">{f.idProofType || "ID"} front</Label>
               <PhotoUpload value={f.aadhaarFrontUrl} onChange={(url) => set("aadhaarFrontUrl", url)} label="Upload front" />
             </div>
             <div>
-              <Label className="mb-1">Aadhaar back</Label>
+              <Label className="mb-1">{f.idProofType || "ID"} back</Label>
               <PhotoUpload value={f.aadhaarBackUrl} onChange={(url) => set("aadhaarBackUrl", url)} label="Upload back" />
             </div>
           </div>
@@ -380,52 +485,40 @@ export function TenantFormDialog({
             <Input value={f.notes} onChange={(e) => set("notes", e.target.value)} />
           </Field>
 
-          {isNew && (
+          {(isNew || currentAgreement) && (
             <>
-              <div className="border-t pt-3">
-                <p className="text-base font-semibold text-primary">Onboarding agreement</p>
-                <p className="text-xs text-muted-foreground">
-                  Editable later from the tenant profile, and changes create a new dated, shareable version.
-                </p>
-              </div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 border-t pt-3 sm:grid-cols-2">
                 <Field label="Electricity charge per unit">
                   <Input
                     type="number"
-                    value={agreement.electricityRate}
-                    onChange={(e) => setAgreement({ ...agreement, electricityRate: Number(e.target.value) })}
+                    value={agreement.electricityRate === 0 ? "" : agreement.electricityRate}
+                    onChange={(e) =>
+                      setAgreement({
+                        ...agreement,
+                        electricityRate: e.target.value === "" ? 0 : Number(e.target.value),
+                      })
+                    }
                   />
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {isNew
+                      ? `Filled in from Settings, ${inr(electricityRatePerUnit)} per unit. Change it here just for this tenant if needed.`
+                      : "Updating this changes the tenant's agreement directly, no new version."}
+                  </p>
                 </Field>
-                <Field label="Laundry charge / month">
-                  <Input
-                    type="number"
-                    disabled={!agreement.laundryChargeable}
-                    value={agreement.laundryCharge}
-                    onChange={(e) => setAgreement({ ...agreement, laundryCharge: Number(e.target.value) })}
-                  />
-                </Field>
-              </div>
-              <div className="flex items-center gap-2">
-                <Switch checked={agreement.laundryChargeable} onCheckedChange={(v) => setAgreement({ ...agreement, laundryChargeable: v })} />
-                <span className="text-sm">Laundry is chargeable</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Switch checked={agreement.depositRefundable} onCheckedChange={(v) => setAgreement({ ...agreement, depositRefundable: v })} />
-                <span className="text-sm">Security deposit is refundable</span>
               </div>
 
               <div>
                 <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Other chargeable facilities
+                  Extra charges (laundry, food, anything else)
                 </p>
                 {agreement.facilities.map((fac, i) => (
                   <div key={i} className="mb-2 flex gap-2">
-                    <Input placeholder="Facility name" value={fac.name} onChange={(e) => updateFacility(i, "name", e.target.value)} />
+                    <Input placeholder="What's it for" value={fac.name} onChange={(e) => updateFacility(i, "name", e.target.value)} />
                     <Input
                       placeholder="Amount"
                       type="number"
-                      value={fac.amount}
-                      onChange={(e) => updateFacility(i, "amount", Number(e.target.value))}
+                      value={fac.amount === 0 ? "" : fac.amount}
+                      onChange={(e) => updateFacility(i, "amount", e.target.value === "" ? 0 : Number(e.target.value))}
                     />
                     <Button variant="ghost" size="icon" onClick={() => removeFacility(i)}>
                       <X className="h-4 w-4" />
@@ -433,26 +526,28 @@ export function TenantFormDialog({
                   </div>
                 ))}
                 <Button variant="outline" size="sm" onClick={addFacility}>
-                  <Plus className="h-3.5 w-3.5" /> Add facility
+                  <Plus className="h-3.5 w-3.5" /> Add extra charge
                 </Button>
-              </div>
-
-              <div>
-                <Label className="mb-1">Agreement copy / signature photo</Label>
-                <PhotoUpload value={agreement.photoUrl} onChange={(url) => setAgreement({ ...agreement, photoUrl: url })} />
               </div>
             </>
           )}
 
           <div className="flex gap-3 pt-2">
-            <Button variant="outline" className="flex-1" onClick={() => onOpenChange(false)}>
+            <Button variant="outline" className="flex-1" onClick={close}>
               Cancel
             </Button>
             <Button className="flex-1" onClick={submit} disabled={saving}>
               {isNew ? "Onboard tenant" : "Save changes"}
             </Button>
           </div>
+          {isNew && (
+            <p className="text-center text-xs text-muted-foreground">
+              This whole form is the onboarding agreement. Editable later from the tenant&apos;s profile, in place,
+              no versioning.
+            </p>
+          )}
         </div>
+        )}
       </DialogContent>
     </Dialog>
   );

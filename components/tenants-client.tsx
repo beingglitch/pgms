@@ -19,10 +19,12 @@ export function TenantsClient({
   tenants,
   outstandingByTenant,
   roomOptions,
+  electricityRatePerUnit,
 }: {
   tenants: TenantRow[];
   outstandingByTenant: Record<string, { amount: number; overdue: boolean }>;
   roomOptions: RoomOption[];
+  electricityRatePerUnit: number;
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"ACTIVE" | "VACATED" | "ALL">("ACTIVE");
@@ -122,7 +124,12 @@ export function TenantsClient({
         })}
       </div>
 
-      <TenantFormDialog open={formOpen} onOpenChange={setFormOpen} roomOptions={roomOptions} />
+      <TenantFormDialog
+        open={formOpen}
+        onOpenChange={setFormOpen}
+        roomOptions={roomOptions}
+        electricityRatePerUnit={electricityRatePerUnit}
+      />
     </div>
   );
 }

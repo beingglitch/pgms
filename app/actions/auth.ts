@@ -45,7 +45,7 @@ async function startSession() {
 /// First-run setup. Refuses once a password exists so this can't be used to
 /// take over an already-configured property.
 export async function createPassword(password: string) {
-  if (password.length < 8) return { error: "Use at least 8 characters." };
+  if (password.length < 4) return { error: "Use at least 4 characters." };
   const info = await getPgInfo();
   if (info.passwordHash) return { error: "A password is already set. Sign in instead." };
 
@@ -75,7 +75,7 @@ export async function signOut() {
 
 export async function changePassword(actor: string, current: string, next: string) {
   await requireAuth();
-  if (next.length < 8) return { error: "Use at least 8 characters." };
+  if (next.length < 4) return { error: "Use at least 4 characters." };
 
   const info = await getPgInfo();
   if (!verifyPassword(current, info.passwordHash)) return { error: "Current password is incorrect." };
@@ -95,7 +95,7 @@ export async function resetPasswordWithCode(code: string, next: string) {
   if (!process.env.DEVELOPER_RECOVERY_CODE) {
     return { error: "Password recovery isn't set up for this property." };
   }
-  if (next.length < 8) return { error: "Use at least 8 characters." };
+  if (next.length < 4) return { error: "Use at least 4 characters." };
   if (!verifyRecoveryCode(code)) return { error: "Incorrect recovery code." };
 
   await prisma.pgInfo.update({

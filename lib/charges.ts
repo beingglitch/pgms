@@ -1,4 +1,4 @@
-import type { ChargeType, SplitMode } from "@/lib/generated/prisma/enums";
+import type { ChargeType } from "@/lib/generated/prisma/enums";
 
 export type Money = number | string | { toString(): string };
 
@@ -28,67 +28,45 @@ export function splitEvenly(total: number, parts: number): number[] {
   return Array.from({ length: parts }, (_, i) => (base + (i < remainder ? sign : 0)) / 100);
 }
 
-/** Room setting wins, then the floor's, then the property-wide default. */
-export function resolveSplitMode(
-  room: { splitMode: SplitMode | null; floor?: { splitMode: SplitMode | null } | null } | null | undefined,
-  propertyDefault: SplitMode
-): SplitMode {
-  return room?.splitMode ?? room?.floor?.splitMode ?? propertyDefault;
-}
-
 export type RoomForSplit = {
   rentAmount: Money;
   capacity: number;
-  splitMode: SplitMode | null;
-  floor?: { splitMode: SplitMode | null } | null;
 };
 
 /**
- * What one bed in a room costs.
- *
- * BY_CAPACITY divides by the number of beds, so each tenant pays the same
- * whether or not the room is full and an empty bed is the owner's loss.
- * BY_OCCUPANTS divides by who is actually living there, so the room always
- * earns its full rent and the people in it absorb a vacancy.
+ * What one bed in a room costs: the room's total rent divided by its number
+ * of beds, fixed regardless of how many are actually filled right now. An
+ * empty bed is the property's lost revenue, not a surcharge on whoever's
+ * already moved in, a tenant pays for their bed, not for the room.
  */
-export function rentShare(room: RoomForSplit, occupants: number, propertyDefault: SplitMode): number {
+export function rentShare(room: RoomForSplit): number {
   const roomRent = num(room.rentAmount);
-  const mode = resolveSplitMode(room, propertyDefault);
-
-  if (mode === "BY_OCCUPANTS") {
-    return occupants > 0 ? round2(roomRent / occupants) : roomRent;
-  }
   return room.capacity > 0 ? round2(roomRent / room.capacity) : roomRent;
 }
 
 export type TenantForRent = {
   rentAmount: Money;
   rentOverride?: Money | null;
-  room?: (RoomForSplit & { tenants?: { id: string }[] }) | null;
+  room?: RoomForSplit | null;
 };
 
 /**
  * The rent this tenant actually owes each month.
  *
- * A per-tenant override always wins. Otherwise the room's rent is split. A
- * tenant with no room, or a room with no rent set, falls back to the amount
- * on their own record, which is how every tenant worked before rooms existed.
+ * A per-tenant override always wins. Otherwise it's the room's per-bed rate.
+ * A tenant with no room, or a room with no rent set, falls back to the
+ * amount on their own record, which is how every tenant worked before rooms
+ * existed.
  */
-export function effectiveRent(
-  tenant: TenantForRent,
-  propertyDefault: SplitMode,
-  occupantCount?: number
-): number {
+export function effectiveRent(tenant: TenantForRent): number {
   if (tenant.rentOverride !== null && tenant.rentOverride !== undefined) {
     return num(tenant.rentOverride);
   }
 
   const room = tenant.room;
   if (!room || num(room.rentAmount) <= 0) return num(tenant.rentAmount);
-  if (resolveSplitMode(room, propertyDefault) === "CUSTOM") return num(tenant.rentAmount);
 
-  const occupants = occupantCount ?? room.tenants?.length ?? room.capacity;
-  return rentShare(room, occupants, propertyDefault);
+  return rentShare(room);
 }
 
 export type ChargeLike = {
@@ -242,6 +220,93 @@ export function pendingRentCycles(
     if (!alreadyBilledPeriods.has(period)) cycles.push({ start, period });
   }
   return cycles;
+}
+
+/**
+ * The next date on or after `after` that falls on the same day-of-month as
+ * `anchor`, clamped for short months the same way addCalendarMonths is.
+ *
+ * How a new roommate's first cycle lands on an existing roommate's due-day:
+ * find where that day next occurs after the new tenant's join date.
+ */
+export function nextAnchorOccurrence(anchor: Date | string, after: Date | string): Date {
+  const anchorDay = new Date(anchor).getUTCDate();
+  const afterDate = new Date(after);
+  const thisMonth = new Date(Date.UTC(afterDate.getUTCFullYear(), afterDate.getUTCMonth(), 1));
+  const lastDayThisMonth = new Date(Date.UTC(thisMonth.getUTCFullYear(), thisMonth.getUTCMonth() + 1, 0)).getUTCDate();
+  const candidate = new Date(Date.UTC(thisMonth.getUTCFullYear(), thisMonth.getUTCMonth(), Math.min(anchorDay, lastDayThisMonth)));
+  return candidate > afterDate ? candidate : addCalendarMonths(candidate, 1);
+}
+
+/** A monthly amount pro-rated over a flat 30-day month, the same convention as the example this was built from. */
+export function proratedRent(monthlyRent: number, days: number): number {
+  return round2((monthlyRent / 30) * Math.max(days, 0));
+}
+
+/**
+ * Split a total proportionally by weight instead of evenly, still exact to
+ * the paisa: splitEvenly is the special case where every weight is equal.
+ */
+export function splitByWeights(total: number, weights: number[]): number[] {
+  const sum = weights.reduce((a, b) => a + b, 0);
+  if (weights.length === 0 || sum <= 0) return weights.map(() => 0);
+
+  const paise = Math.round(total * 100);
+  const raw = weights.map((w) => (paise * w) / sum);
+  const base = raw.map((r) => Math.trunc(r));
+  let remainder = paise - base.reduce((a, b) => a + b, 0);
+  const sign = remainder < 0 ? -1 : 1;
+  remainder = Math.abs(remainder);
+
+  const byFraction = raw
+    .map((r, i) => ({ i, frac: Math.abs(r - Math.trunc(r)) }))
+    .sort((a, b) => b.frac - a.frac);
+
+  const result = [...base];
+  for (let k = 0; k < remainder; k++) result[byFraction[k % byFraction.length].i] += sign;
+  return result.map((v) => v / 100);
+}
+
+/**
+ * How much of a room's electricity bill each current occupant owes, weighted
+ * by the days they were actually there within the reading period.
+ *
+ * Usage is assumed even across the period (the only assumption possible from
+ * a start/end total), so each day's unit-share splits evenly between however
+ * many occupants were present that day, and a tenant's weight is the sum of
+ * their share across every day they lived there. Someone who joined partway
+ * through pays only for the days since they moved in, and days before anyone
+ * else arrives are billed in full to whoever was already there.
+ */
+export function roomOccupantWeights(
+  occupants: { id: string; joinDate: Date | string }[],
+  periodStart: Date | string,
+  periodEnd: Date | string
+): Map<string, number> {
+  const start = new Date(periodStart).getTime();
+  const end = new Date(periodEnd).getTime();
+  const effectiveJoin = (o: { joinDate: Date | string }) => Math.max(new Date(o.joinDate).getTime(), start);
+
+  const boundaries = new Set<number>([start, end]);
+  for (const o of occupants) {
+    const j = effectiveJoin(o);
+    if (j > start && j < end) boundaries.add(j);
+  }
+  const points = [...boundaries].sort((a, b) => a - b);
+
+  const weights = new Map<string, number>(occupants.map((o) => [o.id, 0]));
+  for (let i = 0; i < points.length - 1; i++) {
+    const segStart = points[i];
+    const segDays = (points[i + 1] - segStart) / 86400000;
+    if (segDays <= 0) continue;
+
+    const present = occupants.filter((o) => effectiveJoin(o) <= segStart);
+    if (present.length === 0) continue;
+
+    const share = segDays / present.length;
+    for (const o of present) weights.set(o.id, (weights.get(o.id) ?? 0) + share);
+  }
+  return weights;
 }
 
 export const CHARGE_TYPE_LABELS: Record<ChargeType, string> = {

@@ -304,3 +304,11 @@
     @apply border-l-2 border-ledger pl-3 text-ledger;
   }
 }
+
+/* Password fields have their own show/hide button; Edge and some other
+   browsers draw a native reveal icon in the same corner, which stacks on
+   top of ours. */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none;
+}

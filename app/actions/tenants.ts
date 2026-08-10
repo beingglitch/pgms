@@ -3,9 +3,15 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "./activity";
-import { chargeOutstanding, planAllocations } from "@/lib/charges";
-import { generateFirstRentCharge } from "./charges";
-import { startElectricityReading } from "./electricity";
+import { chargeOutstanding, nextAnchorOccurrence, planAllocations } from "@/lib/charges";
+import { generateFirstRentCharge, generateSyncedFirstRentCharge } from "./charges";
+import {
+  closeElectricityReading,
+  getOpenReadingForRoom,
+  resetElectricityIfRoomEmpty,
+  startElectricityReading,
+} from "./electricity";
+import { addLedgerEntry } from "./ledger";
 
 export type PaymentMethod = "UPI" | "CASH" | "BANK_TRANSFER" | "CHEQUE";
 
@@ -22,6 +28,12 @@ export type TenantInput = {
   /** Starting meter reading + proof photo, captured at onboarding if the room has no reading yet. */
   meterStartReading?: number;
   meterStartPhotoUrl?: string;
+  /**
+   * What the tenant actually handed over on move-in day, settled against
+   * their first rent charge immediately. Anything short of the full month
+   * stays on the books as a normal due, same as any other partial payment.
+   */
+  advancePayment?: number;
   rentAmount: number;
   depositAmount: number;
   depositMethod: PaymentMethod;
@@ -85,8 +97,7 @@ export async function createTenant(actor: string, input: TenantInput, agreement:
     ? await prisma.room.findUnique({
         where: { id: input.roomId },
         include: {
-          floor: { select: { splitMode: true } },
-          tenants: { where: { status: "ACTIVE" }, select: { id: true } },
+          tenants: { where: { status: "ACTIVE" }, select: { id: true, joinDate: true, rentCycleAnchor: true } },
         },
       })
     : null;
@@ -141,15 +152,27 @@ export async function createTenant(actor: string, input: TenantInput, agreement:
   });
   await logActivity(actor, "Tenant onboarded", `${tenant.name} · Room ${tenant.roomNumber || "-"}`);
 
-  await generateFirstRentCharge(actor, {
-    id: tenant.id,
-    joinDate: tenant.joinDate,
-    rentAmount: tenant.rentAmount,
-    rentOverride: tenant.rentOverride,
-    // The room's existing occupants plus this tenant, so a BY_OCCUPANTS split
-    // reflects the room as it is the moment they move in, not before.
-    room: room ? { ...room, tenants: [...room.tenants, { id: tenant.id }] } : null,
-  });
+  // Moving into a room that already has someone in it doesn't start its own
+  // cycle: the first charge is pro-rated up to the existing roommate's next
+  // due-day, and every cycle after that is anchored there too, so the room
+  // settles onto one shared due date instead of two.
+  const existingOccupant = room?.tenants[0];
+  if (existingOccupant) {
+    const syncDate = nextAnchorOccurrence(
+      existingOccupant.rentCycleAnchor ?? existingOccupant.joinDate,
+      tenant.joinDate
+    );
+    await generateSyncedFirstRentCharge(actor, { id: tenant.id, joinDate: tenant.joinDate, rentAmount: tenant.rentAmount }, syncDate);
+    await prisma.tenant.update({ where: { id: tenant.id }, data: { rentCycleAnchor: syncDate } });
+  } else {
+    await generateFirstRentCharge(actor, {
+      id: tenant.id,
+      joinDate: tenant.joinDate,
+      rentAmount: tenant.rentAmount,
+      rentOverride: tenant.rentOverride,
+      room: room,
+    });
+  }
 
   if (input.roomId && input.meterStartReading !== undefined) {
     await startElectricityReading(actor, {
@@ -158,6 +181,17 @@ export async function createTenant(actor: string, input: TenantInput, agreement:
       startDate: input.joinDate,
       ratePerUnit: agreement.electricityRate,
       photoUrl: input.meterStartPhotoUrl,
+    });
+  }
+
+  if (input.advancePayment && input.advancePayment > 0) {
+    await addLedgerEntry(actor, {
+      tenantId: tenant.id,
+      type: "RENT",
+      amount: input.advancePayment,
+      date: input.joinDate,
+      mode: input.depositMethod,
+      note: "Advance payment at joining",
     });
   }
 
@@ -185,20 +219,26 @@ export async function updateTenant(actor: string, id: string, input: Partial<Ten
 export async function deleteTenant(actor: string, id: string) {
   const tenant = await prisma.tenant.delete({ where: { id } });
   await logActivity(actor, "Tenant deleted", tenant.name);
+  if (tenant.roomId) await resetElectricityIfRoomEmpty(actor, tenant.roomId);
   revalidatePath("/tenants");
+  revalidatePath("/rooms");
   revalidatePath("/");
 }
 
-export async function reviseAgreement(actor: string, tenantId: string, fields: AgreementInput, changeNote: string) {
-  const last = await prisma.agreement.findFirst({ where: { tenantId }, orderBy: { version: "desc" } });
-  const version = (last?.version ?? 0) + 1;
+/**
+ * Updates a tenant's terms in place, no new dated version: there's exactly
+ * one agreement per tenant, and editing it (electricity rate, facilities,
+ * whatever) from the tenant's own Edit details form just changes that one
+ * record, the same way any other field on the tenant does.
+ */
+export async function updateAgreementFields(actor: string, tenantId: string, fields: AgreementInput) {
+  const current = await prisma.agreement.findFirst({ where: { tenantId }, orderBy: { version: "desc" } });
+  if (!current) return;
 
   await prisma.$transaction([
-    prisma.agreement.create({
+    prisma.agreement.update({
+      where: { id: current.id },
       data: {
-        tenantId,
-        version,
-        effectiveDate: new Date(),
         roomNumber: fields.roomNumber,
         rentAmount: fields.rentAmount,
         depositAmount: fields.depositAmount,
@@ -209,8 +249,6 @@ export async function reviseAgreement(actor: string, tenantId: string, fields: A
         facilities: fields.facilities as never,
         photoUrl: fields.photoUrl,
         note: fields.note,
-        changeNote,
-        changedBy: actor,
       },
     }),
     prisma.tenant.update({
@@ -223,8 +261,6 @@ export async function reviseAgreement(actor: string, tenantId: string, fields: A
     }),
   ]);
 
-  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
-  await logActivity(actor, "Agreement revised", `${tenant?.name} · v${version} · ${changeNote || "terms updated"}`);
   revalidatePath(`/tenants/${tenantId}`);
 }
 
@@ -273,11 +309,21 @@ export async function checkoutTenant(
     deductions: CheckoutDeductionInput[];
     refundMethod: PaymentMethod;
     refundChequeNumber?: string;
+    /** Current number on the room's open meter reading, if the owner read it as part of checkout. */
+    finalMeterReading?: number;
   }
 ) {
   const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: tenantId } });
   const checkoutDate = new Date(input.checkoutDate);
   const totalDeductions = input.deductions.reduce((s, d) => s + Number(d.amount || 0), 0);
+
+  // Closing the room's meter here, before the deposit is settled, is what
+  // makes the tenant's share of the electricity used since it opened show up
+  // as a normal unpaid charge below, split with whoever else is still there.
+  if (input.finalMeterReading !== undefined && tenant.roomId) {
+    const open = await getOpenReadingForRoom(tenant.roomId);
+    if (open) await closeElectricityReading(actor, open.id, input.finalMeterReading, input.checkoutDate);
+  }
 
   // Anything still on their account comes out of the deposit first, recorded as
   // a real payment so the charges show settled rather than silently vanishing.
@@ -361,6 +407,8 @@ export async function checkoutTenant(
     "Tenant checked out",
     `${tenant.name} · ${refundAmount >= 0 ? "refund" : "owed"} ₹${Math.abs(refundAmount)} via ${input.refundMethod}`
   );
+
+  if (tenant.roomId) await resetElectricityIfRoomEmpty(actor, tenant.roomId);
 
   revalidatePath("/tenants");
   revalidatePath(`/tenants/${tenantId}`);

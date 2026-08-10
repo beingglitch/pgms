@@ -3,77 +3,47 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { BellRing, CheckCircle2, MessageCircle, Plus, Send } from "lucide-react";
-import { ReminderFormDialog } from "@/components/reminder-form-dialog";
-import { SendMessageDialog } from "@/components/send-message-dialog";
+import { CheckCircle2, Send } from "lucide-react";
 import { SendDuesReminderDialog } from "@/components/send-dues-reminder-dialog";
 import { Amount, EmptyState, KhataRow, PageTitle, Panel, SectionHeading, StatTile } from "@/components/khata";
-import { markReminder, deleteReminder, getReminderHistory } from "@/app/actions/reminders";
+import { getReminderHistory } from "@/app/actions/reminders";
 import { listOutstandingByTenant } from "@/app/actions/charges";
 import { type Signature } from "@/lib/messages";
 import { chargeOutstanding, CHARGE_TYPE_LABELS } from "@/lib/charges";
-import { useManager } from "@/lib/manager-context";
-import { inr, fmtDate, todayISO, dateISO, initials } from "@/lib/format";
-import type { ReminderModel, TenantModel } from "@/lib/generated/prisma/models";
+import { inr, fmtDate, initials } from "@/lib/format";
+import { Button } from "@/components/ui/button";
 
-type ReminderWithTenant = ReminderModel & {
-  tenant: Pick<TenantModel, "name" | "photoUrl" | "phone" | "email"> | null;
-};
 type DueRow = Awaited<ReturnType<typeof listOutstandingByTenant>>[number];
 type History = Awaited<ReturnType<typeof getReminderHistory>>;
 
 export function RemindersClient({
-  reminders,
   dues,
   history,
-  tenants,
   paymentLink,
   signature,
 }: {
-  reminders: ReminderWithTenant[];
   dues: DueRow[];
   history: History;
-  tenants: Pick<TenantModel, "id" | "name" | "roomNumber">[];
   paymentLink: string;
   signature: Signature;
 }) {
   const router = useRouter();
-  const { manager } = useManager();
-  const [formOpen, setFormOpen] = useState(false);
   const [customFor, setCustomFor] = useState<DueRow | null>(null);
-  const [shareTarget, setShareTarget] = useState<ReminderWithTenant | null>(null);
 
   const totalToChase = dues.reduce((s, d) => s + d.summary.total.outstanding, 0);
-  const pending = reminders.filter((r) => r.status === "PENDING");
 
   return (
     <div className="space-y-4">
-      <PageTitle
-        action={
-          <Button size="sm" variant="outline" onClick={() => setFormOpen(true)}>
-            <Plus className="h-4 w-4" /> New note
-          </Button>
-        }
-      >
-        Reminders
-      </PageTitle>
+      <PageTitle>Reminders</PageTitle>
 
-      <div className="grid grid-cols-2 gap-3">
-        <StatTile label="To chase" value={dues.length} tone={dues.length ? "owed" : "positive"} hint={inr(totalToChase)} />
-        <StatTile label="Your notes" value={pending.length} hint="Things you asked to be reminded of" />
-      </div>
+      <StatTile label="To chase" value={dues.length} tone={dues.length ? "owed" : "positive"} hint={inr(totalToChase)} />
 
       <Tabs defaultValue="chase">
         <TabsList className="w-full">
           <TabsTrigger value="chase" className="flex-1">
             Dues to chase
-          </TabsTrigger>
-          <TabsTrigger value="notes" className="flex-1">
-            Your notes
           </TabsTrigger>
           <TabsTrigger value="sent" className="flex-1">
             Sent
@@ -100,78 +70,6 @@ export function RemindersClient({
                 />
               ))}
             </>
-          )}
-        </TabsContent>
-
-        <TabsContent value="notes" className="mt-4 space-y-2">
-          {reminders.length === 0 ? (
-            <EmptyState
-              icon={BellRing}
-              title="No notes yet"
-              action={
-                <Button onClick={() => setFormOpen(true)}>
-                  <Plus className="h-4 w-4" /> Add a note
-                </Button>
-              }
-            >
-              Use these for anything that isn&apos;t a due, like a promised repair or a document to collect.
-            </EmptyState>
-          ) : (
-            reminders.map((r) => {
-              const late = r.status === "PENDING" && dateISO(r.dueDate) < todayISO();
-              return (
-                <Panel key={r.id} className={late ? "border-ledger/50" : ""}>
-                  <div className="flex items-start gap-3">
-                    <Avatar className="h-9 w-9">
-                      <AvatarImage src={r.tenant?.photoUrl ?? undefined} />
-                      <AvatarFallback className="text-[10px]">{initials(r.tenant?.name)}</AvatarFallback>
-                    </Avatar>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold">
-                        {r.title}
-                        {r.tenant?.name ? `, ${r.tenant.name}` : ""}
-                        <Badge variant="outline" className="ml-1.5 capitalize">
-                          {r.type.toLowerCase()}
-                        </Badge>
-                      </p>
-                      <p className={`text-xs ${late ? "font-semibold text-ledger" : "text-muted-foreground"}`}>
-                        {r.status === "DONE" ? "Done" : late ? "Overdue since" : "Due"} {fmtDate(r.dueDate)}
-                        {r.amount ? ` · ${inr(r.amount)}` : ""}
-                      </p>
-                      {r.note && <p className="mt-0.5 text-xs text-muted-foreground">{r.note}</p>}
-                      <div className="mt-2 flex flex-wrap gap-3">
-                        <button
-                          onClick={() => setShareTarget(r)}
-                          className="flex items-center gap-1 text-xs font-semibold text-primary"
-                        >
-                          <MessageCircle className="h-3 w-3" /> Send
-                        </button>
-                        {r.status === "PENDING" && (
-                          <button
-                            onClick={async () => {
-                              await markReminder(manager, r.id, "DONE");
-                              router.refresh();
-                            }}
-                            className="text-xs font-semibold text-positive"
-                          >
-                            Mark done
-                          </button>
-                        )}
-                        <button
-                          onClick={async () => {
-                            await deleteReminder(r.id);
-                            router.refresh();
-                          }}
-                          className="text-xs font-semibold text-destructive"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </Panel>
-              );
-            })
           )}
         </TabsContent>
 
@@ -203,8 +101,6 @@ export function RemindersClient({
         </TabsContent>
       </Tabs>
 
-      <ReminderFormDialog open={formOpen} onOpenChange={setFormOpen} tenants={tenants} />
-
       {customFor && (
         <SendDuesReminderDialog
           open={!!customFor}
@@ -222,21 +118,6 @@ export function RemindersClient({
           email={customFor.tenant.email}
           signature={signature}
           paymentLink={paymentLink}
-        />
-      )}
-
-      {shareTarget && (
-        <SendMessageDialog
-          open={!!shareTarget}
-          onOpenChange={(o) => !o && setShareTarget(null)}
-          title="Send reminder"
-          subject={shareTarget.title}
-          message={`Hi ${shareTarget.tenant?.name ?? ""}, a quick reminder about ${shareTarget.title}${
-            shareTarget.amount ? ` (${inr(shareTarget.amount)})` : ""
-          }, due ${fmtDate(shareTarget.dueDate)}.\n\n${signature.ownerName}, ${signature.pgName}`}
-          phone={shareTarget.tenant?.phone}
-          email={shareTarget.tenant?.email}
-          defaultLink={paymentLink}
         />
       )}
     </div>

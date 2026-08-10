@@ -8,8 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { BedDouble, DoorOpen, Layers, Pencil, Plus, Trash2, UserPlus, Zap } from "lucide-react";
+import { BedDouble, DoorOpen, Layers, Pencil, Plus, RotateCcw, Trash2, UserPlus, Zap } from "lucide-react";
 import { Amount, EmptyState, PageTitle, Panel, SectionHeading, StatTile } from "@/components/khata";
 import {
   assignTenantToRoom,
@@ -21,22 +20,15 @@ import {
   updateFloor,
   updateRoom,
 } from "@/app/actions/rooms";
-import { MeterReadingDialog } from "@/components/meter-reading-dialog";
+import { resetElectricityReading } from "@/app/actions/electricity";
 import { useManager } from "@/lib/manager-context";
-import { initials } from "@/lib/format";
+import { initials, fmtDate } from "@/lib/format";
 import { toast } from "sonner";
-import type { SplitMode } from "@/lib/generated/prisma/enums";
 
 type Building = Awaited<ReturnType<typeof getBuilding>>;
 type Room = Building["floors"][number]["rooms"][number];
 type Floor = Building["floors"][number];
 type Person = { id: string; name: string; photoUrl: string | null };
-
-const SPLIT_LABELS: Record<SplitMode, string> = {
-  BY_CAPACITY: "Split by beds",
-  BY_OCCUPANTS: "Split by people living there",
-  CUSTOM: "Each tenant's own rent",
-};
 
 const CAPACITY_WORDS = ["", "Single", "Double", "Triple", "Four-sharing", "Five-sharing", "Six-sharing"];
 
@@ -67,18 +59,27 @@ function nextFloorName(existingCount: number) {
 export function RoomsClient({
   building,
   unassigned,
-  electricityRate,
 }: {
   building: Building;
   unassigned: Person[];
-  electricityRate: number;
 }) {
   const router = useRouter();
   const { manager } = useManager();
   const [floorForm, setFloorForm] = useState<{ open: boolean; floor?: Floor }>({ open: false });
   const [roomForm, setRoomForm] = useState<{ open: boolean; floorId?: string; room?: Room }>({ open: false });
   const [assigning, setAssigning] = useState<{ room: Room; bedNumber: string } | null>(null);
-  const [metering, setMetering] = useState<Room | null>(null);
+  const [resetting, setResetting] = useState<string | null>(null);
+
+  async function reset(room: Room) {
+    setResetting(room.id);
+    try {
+      await resetElectricityReading(manager, room.id);
+      toast.success(`Room ${room.number}'s meter reading reset`);
+      router.refresh();
+    } finally {
+      setResetting(null);
+    }
+  }
 
   const { totals } = building;
   const vacant = totals.beds - totals.occupied;
@@ -146,7 +147,6 @@ export function RoomsClient({
               <h2 className="font-display text-lg font-semibold tracking-tight">{floor.name}</h2>
               <span className="text-xs text-muted-foreground">
                 {floor.rooms.length} room{floor.rooms.length === 1 ? "" : "s"}
-                {floor.splitMode ? ` · ${SPLIT_LABELS[floor.splitMode].toLowerCase()}` : ""}
               </span>
             </div>
             <div className="flex gap-1">
@@ -169,9 +169,10 @@ export function RoomsClient({
                 <RoomCard
                   key={room.id}
                   room={room}
+                  resetting={resetting === room.id}
                   onEdit={() => setRoomForm({ open: true, floorId: floor.id, room })}
                   onAssign={(bedNumber) => setAssigning({ room, bedNumber })}
-                  onMeter={() => setMetering(room)}
+                  onReset={() => reset(room)}
                 />
               ))}
             </div>
@@ -201,47 +202,23 @@ export function RoomsClient({
         manager={manager}
         onDone={() => router.refresh()}
       />
-      {metering && (
-        <MeterReadingDialog
-          key={metering.id}
-          open={!!metering}
-          onOpenChange={(o) => !o && setMetering(null)}
-          roomId={metering.id}
-          occupants={metering.tenants.map((t) => ({ id: t.id, name: t.name }))}
-          defaultRate={electricityRate}
-          lastReading={
-            metering.lastClosedReading
-              ? {
-                  endReading: Number(metering.lastClosedReading.endReading),
-                  endDate: metering.lastClosedReading.endDate!.toISOString(),
-                }
-              : null
-          }
-        />
-      )}
-
-      {building.floors.length > 0 && (
-        <p className="text-xs text-muted-foreground">
-          Rent is split <strong>{SPLIT_LABELS[building.defaultSplitMode].toLowerCase()}</strong> unless a floor or room
-          says otherwise. Change the property-wide default in Settings.
-        </p>
-      )}
     </div>
   );
 }
 
 function RoomCard({
   room,
+  resetting,
   onEdit,
   onAssign,
-  onMeter,
+  onReset,
 }: {
   room: Room;
+  resetting: boolean;
   onEdit: () => void;
   onAssign: (bedNumber: string) => void;
-  onMeter: () => void;
+  onReset: () => void;
 }) {
-  const full = room.occupied >= room.capacity;
 
   return (
     <Panel className="flex flex-col gap-3">
@@ -287,49 +264,36 @@ function RoomCard({
       <div className="flex items-center justify-between border-t border-border/70 pt-2.5">
         <p className="text-xs text-muted-foreground">
           <BedDouble className="mr-1 inline h-3.5 w-3.5" />
-          {room.splitModeResolved === "CUSTOM" ? (
-            "Each tenant's own rent"
-          ) : (
-            <>
-              <strong className="tabular text-foreground">{`₹${room.perBed.toLocaleString("en-IN")}`}</strong> per bed
-            </>
-          )}
-          {full ? "" : room.splitModeResolved === "BY_OCCUPANTS" ? " · rises if someone leaves" : ""}
+          <strong className="tabular text-foreground">{`₹${room.perBed.toLocaleString("en-IN")}`}</strong> per bed
         </p>
-        <div className="flex gap-1">
-          <Button size="sm" variant="ghost" onClick={onMeter} title="Log meter reading">
-            <Zap className="h-3.5 w-3.5" />
-          </Button>
-          <Button size="sm" variant="ghost" onClick={onEdit} title="Edit room">
-            <Pencil className="h-3.5 w-3.5" />
+        <Button size="sm" variant="ghost" onClick={onEdit} title="Edit room">
+          <Pencil className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+
+      {room.openReading && (
+        <div className="flex items-center gap-2.5 rounded-xl border border-border/70 bg-muted/30 p-2.5">
+          {room.openReading.photoUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={room.openReading.photoUrl}
+              alt="Meter reading proof"
+              className="h-10 w-10 shrink-0 rounded-lg border border-border object-cover"
+            />
+          )}
+          <div className="min-w-0 flex-1">
+            <p className="flex items-center gap-1 text-xs font-semibold">
+              <Zap className="h-3 w-3 shrink-0 text-muted-foreground" />
+              Starting reading {Number(room.openReading.startReading).toLocaleString("en-IN")}
+            </p>
+            <p className="text-[11px] text-muted-foreground">Since {fmtDate(room.openReading.startDate)}</p>
+          </div>
+          <Button size="sm" variant="ghost" onClick={onReset} disabled={resetting} title="Reset meter reading">
+            <RotateCcw className="h-3.5 w-3.5" />
           </Button>
         </div>
-      </div>
+      )}
     </Panel>
-  );
-}
-
-function SplitPicker({
-  value,
-  onChange,
-  inheritLabel,
-}: {
-  value: SplitMode | "INHERIT";
-  onChange: (v: SplitMode | "INHERIT") => void;
-  inheritLabel: string;
-}) {
-  return (
-    <Select value={value} onValueChange={(v) => onChange(v as SplitMode | "INHERIT")}>
-      <SelectTrigger>
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="INHERIT">{inheritLabel}</SelectItem>
-        <SelectItem value="BY_CAPACITY">{SPLIT_LABELS.BY_CAPACITY}</SelectItem>
-        <SelectItem value="BY_OCCUPANTS">{SPLIT_LABELS.BY_OCCUPANTS}</SelectItem>
-        <SelectItem value="CUSTOM">{SPLIT_LABELS.CUSTOM}</SelectItem>
-      </SelectContent>
-    </Select>
   );
 }
 
@@ -368,9 +332,7 @@ function FloorDialog({
     }
 
     setBusy(true);
-    // Floors no longer set a rent split of their own: only the property
-    // default and each room's own override apply.
-    const payload = { name, order, splitMode: floor?.splitMode ?? null };
+    const payload = { name, order };
     try {
       if (floor) {
         await updateFloor(manager, floor.id, payload);
@@ -532,7 +494,6 @@ function RoomDialog({
   const [number, setNumber] = useState(room?.number ?? "");
   const [capacity, setCapacity] = useState(room?.capacity ?? 1);
   const [rent, setRent] = useState(Number(room?.rentAmount ?? 0));
-  const [split, setSplit] = useState<SplitMode | "INHERIT">(room?.splitMode ?? "INHERIT");
   const [busy, setBusy] = useState(false);
 
   const perBed = capacity > 0 ? Math.round((rent / capacity) * 100) / 100 : rent;
@@ -540,7 +501,7 @@ function RoomDialog({
   async function save() {
     if (!number.trim()) return toast.error("Give the room a number.");
     setBusy(true);
-    const payload = { number, capacity, rentAmount: rent, splitMode: split === "INHERIT" ? null : split };
+    const payload = { number, capacity, rentAmount: rent };
     try {
       if (room) await updateRoom(manager, room.id, payload);
       else if (state.floorId) await createRoom(manager, { floorId: state.floorId, ...payload });
@@ -591,10 +552,6 @@ function RoomDialog({
               {capacityWord(capacity)} room ·{" "}
               <strong className="tabular text-foreground">₹{perBed.toLocaleString("en-IN")}</strong> per bed
             </p>
-          </div>
-          <div>
-            <Label className="mb-1.5">Rent split for this room</Label>
-            <SplitPicker value={split} onChange={setSplit} inheritLabel="Use the floor / property setting" />
           </div>
           <div className="flex gap-2 pt-1">
             <Button onClick={save} disabled={busy} className="flex-1">

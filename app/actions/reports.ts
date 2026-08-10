@@ -64,11 +64,34 @@ export async function getCheckoutSettlement(tenantId: string) {
   const deposit = num(tenant.depositAmount);
   const unpaid = summary.total.outstanding;
 
+  // The room's open reading, if any, plus who else is currently sharing it:
+  // what the checkout dialog needs to estimate this tenant's slice of
+  // electricity used since the reading opened, live, before anything's
+  // actually closed out.
+  const openReading = tenant.roomId
+    ? await prisma.electricityBill.findFirst({
+        where: { roomId: tenant.roomId, endDate: null },
+        select: { id: true, startReading: true, startDate: true, ratePerUnit: true },
+      })
+    : null;
+
+  const roommates = tenant.roomId
+    ? await prisma.tenant.findMany({
+        where: { roomId: tenant.roomId, status: "ACTIVE", id: { not: tenantId } },
+        select: { id: true, name: true, joinDate: true },
+      })
+    : [];
+
   return {
     deposit,
     unpaidCharges: unpaid,
     deductions,
     refundable: round2(deposit - unpaid - deductions),
+    byType: {
+      rent: summary.byType.RENT.outstanding,
+      electricity: summary.byType.ELECTRICITY.outstanding,
+      other: round2(summary.byType.LAUNDRY.outstanding + summary.byType.OTHER.outstanding),
+    },
     openCharges: tenant.charges
       .filter((c) => !c.waived)
       .map((c) => ({
@@ -80,6 +103,16 @@ export async function getCheckoutSettlement(tenantId: string) {
       }))
       .filter((c) => c.outstanding > 0.005),
     existingDeductions: tenant.checkoutDeductions,
+    openReading: openReading
+      ? {
+          id: openReading.id,
+          startReading: num(openReading.startReading),
+          startDate: openReading.startDate,
+          ratePerUnit: num(openReading.ratePerUnit),
+        }
+      : null,
+    roommates,
+    tenantJoinDate: tenant.joinDate,
   };
 }
 
@@ -227,7 +260,6 @@ export async function exportAllData() {
         room: r.number,
         beds: r.capacity,
         roomRent: num(r.rentAmount),
-        splitMode: r.splitMode ?? r.floor.splitMode ?? "(property default)",
       }))
     ),
     "reminders.csv": toCsv(

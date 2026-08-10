@@ -3,7 +3,6 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "./activity";
-import type { SplitMode } from "@/lib/generated/prisma/enums";
 
 export async function getPgInfo() {
   const info = await prisma.pgInfo.findUnique({ where: { id: "singleton" } });
@@ -23,7 +22,6 @@ export async function updatePgInfo(
     paymentLink: string;
     electricityRatePerUnit: number;
     dueSoonDays: number;
-    defaultSplitMode: SplitMode;
   }
 ) {
   await prisma.pgInfo.upsert({

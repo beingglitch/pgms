@@ -15,7 +15,6 @@ import { PageTitle, Panel, SectionHeading } from "@/components/khata";
 import { useManager } from "@/lib/manager-context";
 import { toast } from "sonner";
 import type { PgInfoModel, ActivityLogModel } from "@/lib/generated/prisma/models";
-import type { SplitMode } from "@/lib/generated/prisma/enums";
 
 export function SettingsClient({ pgInfo, activity }: { pgInfo: PgInfoModel; activity: ActivityLogModel[] }) {
   const router = useRouter();
@@ -37,7 +36,6 @@ export function SettingsClient({ pgInfo, activity }: { pgInfo: PgInfoModel; acti
       paymentLink: pg.paymentLink,
       electricityRatePerUnit: rate,
       dueSoonDays: pg.dueSoonDays,
-      defaultSplitMode: pg.defaultSplitMode,
     });
     toast.success("Settings saved");
     router.refresh();
@@ -165,27 +163,6 @@ export function SettingsClient({ pgInfo, activity }: { pgInfo: PgInfoModel; acti
             </SelectContent>
           </Select>
           <p className="mt-1 text-xs text-muted-foreground">Drives the dashboard counter.</p>
-        </div>
-        <div>
-          <Label className="mb-1.5">Default rent split for shared rooms</Label>
-          <Select
-            value={pg.defaultSplitMode}
-            onValueChange={(v) => v && setPg({ ...pg, defaultSplitMode: v as SplitMode })}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="BY_CAPACITY">Split by beds</SelectItem>
-              <SelectItem value="BY_OCCUPANTS">Split by people living there</SelectItem>
-              <SelectItem value="CUSTOM">Each tenant&apos;s own rent</SelectItem>
-            </SelectContent>
-          </Select>
-          <p className="mt-1 text-xs text-muted-foreground">
-            <strong>By beds</strong> keeps each tenant&apos;s rent steady and an empty bed is your loss.{" "}
-            <strong>By people</strong> always earns the room&apos;s full rent, so rent rises for the others when
-            someone leaves. Any floor or room can override this.
-          </p>
         </div>
         <div>
           <Label className="mb-1.5">Electricity rate (₹ per unit)</Label>
