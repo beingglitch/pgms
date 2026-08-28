@@ -100,7 +100,7 @@ export async function listRoomOptions() {
     orderBy: [{ floor: { order: "asc" } }, { number: "asc" }],
     include: {
       floor: { select: { name: true } },
-      tenants: { where: { status: "ACTIVE" }, select: { id: true, bedNumber: true, joinDate: true, rentCycleAnchor: true } },
+      tenants: { where: { status: "ACTIVE" }, select: { id: true, bedNumber: true } },
       meterReadings: { where: { endDate: null }, select: { id: true }, take: 1 },
     },
   });
@@ -117,11 +117,6 @@ export async function listRoomOptions() {
       perBed: rentShare(room),
       takenBeds: room.tenants.map((t) => t.bedNumber).filter(Boolean) as string[],
       hasOpenReading: room.meterReadings.length > 0,
-      // Whoever's already there, so a new roommate's first charge can be
-      // pro-rated up to their existing due-day instead of starting its own.
-      existingOccupant: room.tenants[0]
-        ? { joinDate: room.tenants[0].joinDate, rentCycleAnchor: room.tenants[0].rentCycleAnchor }
-        : null,
     };
   });
 }

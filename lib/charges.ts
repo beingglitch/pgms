@@ -140,6 +140,37 @@ export function summariseCharges(
   return { byType, total, overdue };
 }
 
+export const AGING_BUCKETS = [
+  { key: "1-7", label: "1-7 days", min: 1, max: 7, color: "var(--marigold)" },
+  { key: "8-30", label: "8-30 days", min: 8, max: 30, color: "var(--chart-power)" },
+  { key: "31-60", label: "31-60 days", min: 31, max: 60, color: "var(--ledger)" },
+  { key: "60+", label: "60+ days", min: 61, max: Infinity, color: "var(--chart-other)" },
+] as const;
+
+/**
+ * How much of everyone's outstanding balance has been late how long, bucketed
+ * for the dues-aging chart (dashboard "Aging" tab, Ledger dues tab). A charge
+ * not yet due (or paid off) contributes nothing.
+ */
+export function bucketDuesAging(
+  charges: (ChargeLike & { dueDate: Date | string })[],
+  today: string
+): { key: string; label: string; amount: number; color: string }[] {
+  const totals = new Map(AGING_BUCKETS.map((b) => [b.key, 0]));
+
+  for (const charge of charges) {
+    const outstanding = chargeOutstanding(charge);
+    if (outstanding <= 0.005) continue;
+    const due = new Date(charge.dueDate).toISOString().slice(0, 10);
+    if (due >= today) continue;
+    const daysLate = Math.round((new Date(today).getTime() - new Date(due).getTime()) / 86400000);
+    const bucket = AGING_BUCKETS.find((b) => daysLate >= b.min && daysLate <= b.max);
+    if (bucket) totals.set(bucket.key, (totals.get(bucket.key) ?? 0) + outstanding);
+  }
+
+  return AGING_BUCKETS.map((b) => ({ key: b.key, label: b.label, color: b.color, amount: round2(totals.get(b.key) ?? 0) }));
+}
+
 /**
  * Spread a payment across outstanding charges, oldest first.
  *
@@ -173,74 +204,164 @@ export function periodLabel(period: string) {
   return new Date(year, month - 1, 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" });
 }
 
+/**
+ * The financial year a period ("YYYY-MM") falls in, given the month (1-12)
+ * it starts on. Returns the FY's first and last periods plus a label like
+ * "Apr 2026 - Mar 2027" (or just "2026" when the FY starts in January).
+ */
+export function fiscalYearOf(period: string, startMonth: number) {
+  const [year, month] = period.split("-").map(Number);
+  const fyStartYear = month >= startMonth ? year : year - 1;
+  const start = `${fyStartYear}-${String(startMonth).padStart(2, "0")}`;
+  const endMonth = startMonth === 1 ? 12 : startMonth - 1;
+  const endYear = startMonth === 1 ? fyStartYear : fyStartYear + 1;
+  const end = `${endYear}-${String(endMonth).padStart(2, "0")}`;
+
+  const shortLabel = (p: string) => {
+    const [y, m] = p.split("-").map(Number);
+    return new Date(y, m - 1, 1).toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+  };
+
+  const label = startMonth === 1 ? `${fyStartYear}` : `${shortLabel(start)} - ${shortLabel(end)}`;
+  return { start, end, label };
+}
+
 export function periodOf(date: Date | string) {
   const d = new Date(date);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-/**
- * Add n calendar months to a date, anchored to its day-of-month and clamped
- * to the target month's last day when it doesn't have that many days.
- *
- * Built at UTC midnight for the same reason the old dueDateFor was: a rent
- * due date is a calendar date, and computing it in server-local time can
- * land it on the wrong day once server and property are in different zones.
- * This also avoids the native `Date.setMonth` rollover bug: Jan 31 plus one
- * month becomes "Mar 3" via setMonth (Feb only has 28 days), not Feb 28.
+/*
+ * Billing runs on calendar months. Every helper below works in UTC calendar
+ * terms, because a rent period is a date, not an instant: "August" is the
+ * same August whether the server sits in UTC or IST.
  */
-export function addCalendarMonths(date: Date | string, n: number): Date {
-  const d = new Date(date);
-  const day = d.getUTCDate();
-  const targetFirst = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1));
-  const lastDayOfTarget = new Date(Date.UTC(targetFirst.getUTCFullYear(), targetFirst.getUTCMonth() + 1, 0)).getUTCDate();
-  return new Date(Date.UTC(targetFirst.getUTCFullYear(), targetFirst.getUTCMonth(), Math.min(day, lastDayOfTarget)));
+
+/** The period ("YYYY-MM") n months after the given one. Negative n goes back. */
+export function addPeriods(period: string, n: number): string {
+  const [year, month] = period.split("-").map(Number);
+  const d = new Date(Date.UTC(year, month - 1 + n, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/**
+ * Every period from `from` to `to` inclusive, oldest first. Empty if `to` is
+ * before `from`, or if either isn't a real "YYYY-MM": a malformed bound
+ * (say, from an invalid date) must produce nothing, never a runaway list.
+ */
+export function periodsBetween(from: string, to: string): string[] {
+  if (!PERIOD_RE.test(from) || !PERIOD_RE.test(to)) return [];
+  const out: string[] = [];
+  // 600 months is a defensive cap, not a real limit.
+  for (let p = from, i = 0; p <= to && i < 600; p = addPeriods(p, 1), i++) out.push(p);
+  return out;
+}
+
+/** Number of days in the period's month. */
+export function daysInPeriod(period: string): number {
+  const [year, month] = period.split("-").map(Number);
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/** First day of the period, at UTC midnight: the due date of a full month's rent. */
+export function periodStart(period: string): Date {
+  const [year, month] = period.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, 1));
+}
+
+/** Last day of the period, at UTC midnight. */
+export function periodEnd(period: string): Date {
+  const [year, month] = period.split("-").map(Number);
+  return new Date(Date.UTC(year, month, 0));
+}
+
+/** "YYYY-MM-DD" of a date's UTC calendar day. */
+function utcDay(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+export type RentPeriodPlan = {
+  period: string;
+  amount: number;
+  dueDate: Date;
+  /** Days of the month actually being charged for (a full month charges every day of it). */
+  days: number;
+  /** Set only on the join month, when the charge covers part of the month. */
+  partial: { from: Date; to: Date } | null;
+};
+
+/**
+ * What a tenant owes in rent for one calendar month.
+ *
+ * The month they move in is pro-rated: rent counts from the day *after* they
+ * arrive through the end of the month (arrive on the 13th, pay for the
+ * 14th-31st), by the month's actual number of days, and it falls due on the
+ * join date itself. Every month after that is the full amount, due on the
+ * 1st. Joining on the 1st is a full month, there's nothing to pro-rate.
+ */
+export function rentForPeriod(monthlyRent: number, joinDate: Date | string, period: string): RentPeriodPlan {
+  const join = new Date(joinDate);
+  const totalDays = daysInPeriod(period);
+  const joinPeriod = periodOf(join);
+
+  if (joinPeriod !== period || join.getUTCDate() === 1) {
+    return { period, amount: round2(monthlyRent), dueDate: periodStart(period), days: totalDays, partial: null };
+  }
+
+  const firstChargedDay = join.getUTCDate() + 1;
+  const days = Math.max(0, totalDays - join.getUTCDate());
+  const from = new Date(Date.UTC(join.getUTCFullYear(), join.getUTCMonth(), Math.min(firstChargedDay, totalDays)));
+  return {
+    period,
+    amount: round2((monthlyRent * days) / totalDays),
+    dueDate: new Date(Date.UTC(join.getUTCFullYear(), join.getUTCMonth(), join.getUTCDate())),
+    days,
+    partial: { from, to: periodEnd(period) },
+  };
 }
 
 /**
- * Every monthly rent cycle for a tenant that has started on or before `asOf`
- * and doesn't already have a charge, oldest first.
+ * Every rent period a tenant should have a charge for, as of `asOf`, looking
+ * `leadDays` ahead so next month's rent is on the books before the 1st.
  *
- * Cycle 0 starts on joinDate itself (rent is paid in advance, the same day
- * you move in), and cycle N starts N months later, on the same day-of-month
- * the tenant joined on. A tenant who joined the 5th is always due the 5th,
- * regardless of what day anyone else in the building joined on.
+ * Runs from the join month (pro-rated) up to whichever month contains
+ * `asOf + leadDays`, skipping anything already billed. A tenant entered in
+ * August who has actually lived here since April comes back with every month
+ * from April onward, so the owner can settle them one by one.
  */
-export function pendingRentCycles(
+export function pendingRentPeriods(
+  monthlyRent: number,
   joinDate: Date | string,
   asOf: Date,
+  leadDays: number,
   alreadyBilledPeriods: Set<string>
-): { start: Date; period: string }[] {
-  const cycles: { start: Date; period: string }[] = [];
-  // 600 months (50 years) is a defensive cap, not a real limit; nothing
-  // reasonable should ever get close to it.
-  for (let n = 0; n < 600; n++) {
-    const start = addCalendarMonths(joinDate, n);
-    if (start > asOf) break;
-    const period = periodOf(start);
-    if (!alreadyBilledPeriods.has(period)) cycles.push({ start, period });
-  }
-  return cycles;
+): RentPeriodPlan[] {
+  // A missing or malformed lead (an undefined setting, say) means "no lead",
+  // never "every month forever".
+  const lead = Number.isFinite(leadDays) ? Math.max(0, leadDays) : 0;
+  const join = new Date(joinDate);
+  if (Number.isNaN(join.getTime()) || Number.isNaN(asOf.getTime())) return [];
+  const horizon = new Date(asOf.getTime() + lead * 86400000);
+  const from = periodOf(join);
+  const to = periodOf(horizon);
+  if (to < from) return [];
+  return periodsBetween(from, to)
+    .filter((p) => !alreadyBilledPeriods.has(p))
+    .map((p) => rentForPeriod(monthlyRent, joinDate, p))
+    .filter((plan) => plan.amount > 0);
 }
 
-/**
- * The next date on or after `after` that falls on the same day-of-month as
- * `anchor`, clamped for short months the same way addCalendarMonths is.
- *
- * How a new roommate's first cycle lands on an existing roommate's due-day:
- * find where that day next occurs after the new tenant's join date.
- */
-export function nextAnchorOccurrence(anchor: Date | string, after: Date | string): Date {
-  const anchorDay = new Date(anchor).getUTCDate();
-  const afterDate = new Date(after);
-  const thisMonth = new Date(Date.UTC(afterDate.getUTCFullYear(), afterDate.getUTCMonth(), 1));
-  const lastDayThisMonth = new Date(Date.UTC(thisMonth.getUTCFullYear(), thisMonth.getUTCMonth() + 1, 0)).getUTCDate();
-  const candidate = new Date(Date.UTC(thisMonth.getUTCFullYear(), thisMonth.getUTCMonth(), Math.min(anchorDay, lastDayThisMonth)));
-  return candidate > afterDate ? candidate : addCalendarMonths(candidate, 1);
+/** "14 Aug - 31 Aug" style label for a pro-rated stretch, for charge descriptions. */
+export function dayRangeLabel(from: Date, to: Date): string {
+  const f = (d: Date) => d.toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "UTC" });
+  return `${f(from)} - ${f(to)}`;
 }
 
-/** A monthly amount pro-rated over a flat 30-day month, the same convention as the example this was built from. */
-export function proratedRent(monthlyRent: number, days: number): number {
-  return round2((monthlyRent / 30) * Math.max(days, 0));
+/** Whether two dates fall on the same UTC calendar day. */
+export function sameUtcDay(a: Date | string, b: Date | string): boolean {
+  return utcDay(new Date(a)) === utcDay(new Date(b));
 }
 
 /**

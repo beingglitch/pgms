@@ -22,6 +22,8 @@ export async function updatePgInfo(
     paymentLink: string;
     electricityRatePerUnit: number;
     dueSoonDays: number;
+    dueLeadDays: number;
+    fiscalYearStartMonth: number;
   }
 ) {
   await prisma.pgInfo.upsert({

@@ -8,8 +8,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { BedDouble, DoorOpen, Layers, Pencil, Plus, RotateCcw, Trash2, UserPlus, Zap } from "lucide-react";
-import { Amount, EmptyState, PageTitle, Panel, SectionHeading, StatTile } from "@/components/khata";
+import { BedDouble, DoorOpen, Layers, Pencil, Plus, RotateCcw, Trash2, Zap } from "lucide-react";
+import { EmptyState, Panel, SectionHeading } from "@/components/khata";
+import { BackButton } from "@/components/back-button";
 import {
   assignTenantToRoom,
   createFloor,
@@ -22,7 +23,8 @@ import {
 } from "@/app/actions/rooms";
 import { resetElectricityReading } from "@/app/actions/electricity";
 import { useManager } from "@/lib/manager-context";
-import { initials, fmtDate, ordinal, inr } from "@/lib/format";
+import { initials, fmtDate, dateISO, inr } from "@/lib/format";
+import { ZoomableImage } from "@/components/image-viewer";
 import { toast } from "sonner";
 
 type Building = Awaited<ReturnType<typeof getBuilding>>;
@@ -59,10 +61,13 @@ function nextFloorName(existingCount: number) {
 export function RoomsClient({
   building,
   unassigned,
+  noticeTenantIds,
 }: {
   building: Building;
   unassigned: Person[];
+  noticeTenantIds: string[];
 }) {
+  const notice = new Set(noticeTenantIds);
   const router = useRouter();
   const { manager } = useManager();
   const [floorForm, setFloorForm] = useState<{ open: boolean; floor?: Floor }>({ open: false });
@@ -82,25 +87,38 @@ export function RoomsClient({
   }
 
   const { totals } = building;
-  const vacant = totals.beds - totals.occupied;
+  const allRooms = building.floors.flatMap((f) => f.rooms);
+  const rentOnWall = allRooms.reduce((s, r) => s + Number(r.rentAmount), 0);
+  const emptyBedsCost = allRooms.reduce((s, r) => s + (r.capacity - r.occupied) * r.perBed, 0);
 
   return (
     <div className="space-y-5">
-      <PageTitle
-        action={
-          <Button size="sm" variant="outline" onClick={() => setFloorForm({ open: true })}>
-            <Layers className="h-4 w-4" /> Add floor
-          </Button>
-        }
-      >
-        Rooms &amp; beds
-      </PageTitle>
-
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <StatTile label="Rooms" value={totals.rooms} />
-        <StatTile label="Beds filled" value={`${totals.occupied}/${totals.beds}`} tone="positive" />
-        <StatTile label="Vacant" value={vacant} tone={vacant > 0 ? "owed" : "muted"} className="col-span-2 sm:col-span-1" />
+      <div className="flex items-center justify-between gap-2">
+        <BackButton fallbackHref="/" />
+        <Button size="sm" variant="outline" onClick={() => setFloorForm({ open: true })}>
+          <Layers className="h-4 w-4" /> Add floor
+        </Button>
       </div>
+      <h1 className="-mt-3 font-display text-[17px] font-semibold tracking-tight">Rooms &amp; beds</h1>
+
+      <Panel className="grid grid-cols-3 gap-2 p-[13px]">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-muted-foreground">Filled</p>
+          <p className="mt-1 font-display text-[22px] font-semibold leading-none tracking-tight">
+            {totals.occupied}/{totals.beds}
+          </p>
+        </div>
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-muted-foreground">Rent on the wall</p>
+          <p className="mt-1 font-display text-[22px] font-semibold leading-none tracking-tight tabular">{inr(rentOnWall)}</p>
+        </div>
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-muted-foreground">Empty beds cost</p>
+          <p className="mt-1 font-display text-[22px] font-semibold leading-none tracking-tight tabular text-ledger">
+            {inr(emptyBedsCost)}
+          </p>
+        </div>
+      </Panel>
 
       {unassigned.length > 0 && (
         <Panel className="border-marigold/40 bg-marigold/5">
@@ -140,45 +158,66 @@ export function RoomsClient({
         </EmptyState>
       )}
 
-      {building.floors.map((floor) => (
-        <section key={floor.id}>
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <div className="flex items-baseline gap-2">
-              <h2 className="font-display text-lg font-semibold tracking-tight">{floor.name}</h2>
-              <span className="text-xs text-muted-foreground">
-                {floor.rooms.length} room{floor.rooms.length === 1 ? "" : "s"}
-              </span>
-            </div>
-            <div className="flex gap-1">
-              <Button size="sm" variant="ghost" onClick={() => setFloorForm({ open: true, floor })}>
-                <Pencil className="h-3.5 w-3.5" />
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setRoomForm({ open: true, floorId: floor.id })}>
-                <Plus className="h-3.5 w-3.5" /> Room
-              </Button>
-            </div>
-          </div>
+      {building.floors.map((floor) => {
+        const floorBeds = floor.rooms.reduce((s, r) => s + r.capacity, 0);
+        const floorOccupied = floor.rooms.reduce((s, r) => s + r.occupied, 0);
+        const floorRent = floor.rooms.reduce((s, r) => s + Number(r.rentAmount), 0);
 
-          {floor.rooms.length === 0 ? (
-            <p className="rounded-xl border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
-              No rooms on this floor yet.
-            </p>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
-              {floor.rooms.map((room) => (
-                <RoomCard
-                  key={room.id}
-                  room={room}
-                  resetting={resetting === room.id}
-                  onEdit={() => setRoomForm({ open: true, floorId: floor.id, room })}
-                  onAssign={(bedNumber) => setAssigning({ room, bedNumber })}
-                  onReset={() => reset(room)}
-                />
-              ))}
+        return (
+          <section key={floor.id}>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h2 className="font-display text-lg font-semibold tracking-tight">{floor.name}</h2>
+              <div className="flex items-center gap-2">
+                {floor.rooms.length > 0 && (
+                  <span className="text-[11px] font-bold text-primary">
+                    {floorOccupied}/{floorBeds} filled · {inr(floorRent)}
+                  </span>
+                )}
+                <Button size="sm" variant="ghost" onClick={() => setFloorForm({ open: true, floor })}>
+                  <Pencil className="h-3.5 w-3.5" />
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setRoomForm({ open: true, floorId: floor.id })}>
+                  <Plus className="h-3.5 w-3.5" /> Room
+                </Button>
+              </div>
             </div>
-          )}
-        </section>
-      ))}
+
+            {floor.rooms.length === 0 ? (
+              <p className="rounded-xl border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
+                No rooms on this floor yet.
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 gap-[10px]">
+                {floor.rooms.map((room) => (
+                  <RoomCard
+                    key={room.id}
+                    room={room}
+                    resetting={resetting === room.id}
+                    notice={notice}
+                    onEdit={() => setRoomForm({ open: true, floorId: floor.id, room })}
+                    onAssign={(bedNumber) => setAssigning({ room, bedNumber })}
+                    onReset={() => reset(room)}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        );
+      })}
+
+      {building.floors.some((f) => f.rooms.length > 0) && (
+        <div className="flex items-center justify-center gap-4 text-[11px] text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <span className="h-3 w-3 rounded-[3px] bg-primary" /> Filled
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-3 w-3 rounded-[3px] bg-marigold" /> On notice
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-3 w-3 rounded-[3px] bg-input" /> Vacant
+          </span>
+        </div>
+      )}
 
       <FloorDialog
         key={`floor-${floorForm.floor?.id ?? "new"}-${floorForm.open}`}
@@ -209,66 +248,61 @@ export function RoomsClient({
 function RoomCard({
   room,
   resetting,
+  notice,
   onEdit,
   onAssign,
   onReset,
 }: {
   room: Room;
   resetting: boolean;
+  notice: Set<string>;
   onEdit: () => void;
   onAssign: (bedNumber: string) => void;
   onReset: () => void;
 }) {
   const [showHistory, setShowHistory] = useState(false);
 
-  const anchorTenant = room.tenants[0];
-  const dueDay = anchorTenant
-    ? new Date(anchorTenant.rentCycleAnchor ?? anchorTenant.joinDate).getUTCDate()
-    : null;
-
   const closedReadings = room.meterReadings.filter((r) => r.endDate);
+  const vacantCount = room.capacity - room.occupied;
+  const noteLine =
+    vacantCount === 0
+      ? `${room.occupied} of ${room.capacity} · full`
+      : `${vacantCount} bed${vacantCount === 1 ? "" : "s"} free`;
 
   return (
-    <Panel className="flex flex-col gap-3">
+    <Panel className="flex flex-col gap-2.5 p-3">
       <div className="flex items-start justify-between gap-2">
-        <div>
-          <p className="font-display text-lg font-semibold leading-none tracking-tight">Room {room.number}</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {capacityWord(room.capacity)} · {room.occupied}/{room.capacity} filled
-            {dueDay && ` · due on the ${ordinal(dueDay)}`}
-          </p>
-        </div>
-        <div className="text-right">
-          <Amount value={room.rentAmount} size="sm" />
-          <p className="text-[11px] text-muted-foreground">room total</p>
-        </div>
+        <p className="font-display text-[17px] font-semibold leading-none tracking-tight">Room {room.number}</p>
+        <p className="tabular text-[11px] text-muted-foreground">{inr(room.rentAmount)}</p>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex gap-1">
         {room.beds.map((bed) =>
           bed.tenant ? (
             <Link
               key={bed.bedNumber}
               href={`/tenants/${bed.tenant.id}`}
-              className="flex items-center gap-2 rounded-xl border border-border bg-muted/40 px-2.5 py-1.5 transition-colors hover:bg-muted"
+              title={bed.tenant.name}
+              className={`flex h-[22px] flex-1 items-center justify-center rounded-[6px] text-[9px] font-bold transition-opacity hover:opacity-90 ${
+                notice.has(bed.tenant.id) ? "bg-marigold text-marigold-foreground" : "bg-primary text-primary-foreground"
+              }`}
             >
-              <Avatar className="h-6 w-6">
-                <AvatarImage src={bed.tenant.photoUrl ?? undefined} />
-                <AvatarFallback className="text-[9px]">{initials(bed.tenant.name)}</AvatarFallback>
-              </Avatar>
-              <span className="max-w-28 truncate text-xs font-semibold">{bed.tenant.name}</span>
+              {initials(bed.tenant.name)}
             </Link>
           ) : (
             <button
               key={bed.bedNumber}
               onClick={() => onAssign(bed.bedNumber)}
-              className="flex items-center gap-1.5 rounded-xl border border-dashed border-border px-2.5 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:border-primary hover:text-primary"
-            >
-              <UserPlus className="h-3.5 w-3.5" /> Bed {bed.bedNumber}
-            </button>
+              title={`Bed ${bed.bedNumber} · vacant, tap to assign`}
+              className="h-[22px] flex-1 rounded-[6px] bg-input transition-opacity hover:opacity-70"
+            />
           )
         )}
       </div>
+
+      <p className="text-[11px] text-muted-foreground">
+        {noteLine}
+      </p>
 
       <div className="flex items-center justify-between border-t border-border/70 pt-2.5">
         <p className="text-xs text-muted-foreground">
@@ -283,11 +317,11 @@ function RoomCard({
       {room.openReading && (
         <div className="flex items-center gap-2.5 rounded-xl border border-border/70 bg-muted/30 p-2.5">
           {room.openReading.photoUrl && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
+            <ZoomableImage
               src={room.openReading.photoUrl}
               alt="Meter reading proof"
-              className="h-10 w-10 shrink-0 rounded-lg border border-border object-cover"
+              downloadName={`room-${room.number}-meter-${dateISO(room.openReading.startDate)}.jpg`}
+              thumbClassName="h-10 w-10 shrink-0 rounded-lg border border-border object-cover"
             />
           )}
           <div className="min-w-0 flex-1">

@@ -4,10 +4,11 @@ import {
   effectiveRent,
   planAllocations,
   summariseCharges,
-  addCalendarMonths,
-  pendingRentCycles,
-  nextAnchorOccurrence,
-  proratedRent,
+  addPeriods,
+  periodsBetween,
+  daysInPeriod,
+  rentForPeriod,
+  pendingRentPeriods,
   splitByWeights,
   roomOccupantWeights,
 } from "@/lib/charges";
@@ -38,27 +39,99 @@ check("per-tenant override wins", effectiveRent({ rentAmount: 5000, rentOverride
 check("room split used", effectiveRent({ rentAmount: 5000, rentOverride: null, room: triple }), 8000);
 check("no room -> own amount", effectiveRent({ rentAmount: 5000, rentOverride: null, room: null }), 5000);
 
-// A new roommate's first cycle lands on the existing tenant's due-day.
+// Calendar-month arithmetic.
+check("add periods forward", addPeriods("2026-11", 3), "2027-02");
+check("add periods back", addPeriods("2026-01", -1), "2025-12");
+check("periods between", periodsBetween("2026-04", "2026-07"), ["2026-04", "2026-05", "2026-06", "2026-07"]);
+check("periods between, reversed is empty", periodsBetween("2026-07", "2026-04"), []);
+check("days in Feb 2028 (leap)", daysInPeriod("2028-02"), 29);
+check("days in Aug", daysInPeriod("2026-08"), 31);
+
+// Arrive on the 13th: rent runs from the 14th to the 31st, 18 of August's
+// 31 days, and falls due the day they arrive.
+const aug13 = rentForPeriod(5000, "2026-08-13", "2026-08");
+check("join 13 Aug: 18 days charged", aug13.days, 18);
+check("join 13 Aug: 5000 * 18/31", aug13.amount, 2903.23);
+check("join 13 Aug: due on the join date", aug13.dueDate.toISOString().slice(0, 10), "2026-08-13");
 check(
-  "next anchor occurrence, later this month",
-  nextAnchorOccurrence("2026-08-05", "2026-08-01").toISOString().slice(0, 10),
-  "2026-08-05"
-);
-check(
-  "next anchor occurrence, rolls to next month",
-  nextAnchorOccurrence("2026-08-05", "2026-08-20").toISOString().slice(0, 10),
-  "2026-09-05"
-);
-check(
-  "next anchor occurrence, short month clamp",
-  nextAnchorOccurrence("2026-01-31", "2026-02-20").toISOString().slice(0, 10),
-  "2026-02-28"
+  "join 13 Aug: covers 14th to 31st",
+  aug13.partial && [aug13.partial.from.toISOString().slice(0, 10), aug13.partial.to.toISOString().slice(0, 10)],
+  ["2026-08-14", "2026-08-31"]
 );
 
-// Joined the 20th, room's existing due-day is the 5th: 16 days pro-rated
-// off a flat 30-day month, at the room's per-bed rate.
-check("prorated rent, 16 days of 5000/mo", proratedRent(5000, 16), 2666.67);
-check("prorated rent, whole month", proratedRent(5000, 30), 5000);
+// Every month after the join month is the full amount, due on the 1st.
+const sep = rentForPeriod(5000, "2026-08-13", "2026-09");
+check("following month is full rent", sep.amount, 5000);
+check("following month due on the 1st", sep.dueDate.toISOString().slice(0, 10), "2026-09-01");
+check("following month isn't partial", sep.partial, null);
+
+// Joining on the 1st is simply a full month.
+check("join on the 1st: full month", rentForPeriod(5000, "2026-08-01", "2026-08").amount, 5000);
+// Joining on the last day: nothing left to charge this month.
+check("join on the 31st: nothing this month", rentForPeriod(5000, "2026-08-31", "2026-08").amount, 0);
+
+// Entered in late August but living here since 13 April: every month from
+// April (pro-rated, 17 of 30 days) through August is created at once, plus
+// September because 28 Aug + 7 lead days reaches into it.
+const backfill = pendingRentPeriods(5000, "2026-04-13", new Date("2026-08-28T00:00:00Z"), 7, new Set());
+check(
+  "backfill April to September",
+  backfill.map((p) => [p.period, p.amount]),
+  [
+    ["2026-04", 2833.33],
+    ["2026-05", 5000],
+    ["2026-06", 5000],
+    ["2026-07", 5000],
+    ["2026-08", 5000],
+    ["2026-09", 5000],
+  ]
+);
+check(
+  "backfill: only April is partial",
+  backfill.map((p) => (p.partial ? "partial" : "full")),
+  ["partial", "full", "full", "full", "full", "full"]
+);
+
+// The lead window decides when next month appears: 20 Aug + 7 is still
+// August, 25 Aug + 7 crosses into September.
+check(
+  "lead window not yet reached",
+  pendingRentPeriods(5000, "2026-08-01", new Date("2026-08-20T00:00:00Z"), 7, new Set(["2026-08"])).map((p) => p.period),
+  []
+);
+check(
+  "lead window reached",
+  pendingRentPeriods(5000, "2026-08-01", new Date("2026-08-25T00:00:00Z"), 7, new Set(["2026-08"])).map((p) => p.period),
+  ["2026-09"]
+);
+check(
+  "zero lead: only on the 1st",
+  pendingRentPeriods(5000, "2026-08-01", new Date("2026-08-31T00:00:00Z"), 0, new Set(["2026-08"])).map((p) => p.period),
+  []
+);
+
+// Months already billed are skipped, not re-created.
+check(
+  "already-billed months are skipped",
+  pendingRentPeriods(5000, "2026-04-13", new Date("2026-08-28T00:00:00Z"), 0, new Set(["2026-04", "2026-05", "2026-06"])).map((p) => p.period),
+  ["2026-07", "2026-08"]
+);
+
+// Nothing before the join month, ever.
+check("no periods before joining", pendingRentPeriods(5000, "2026-09-05", new Date("2026-08-28T00:00:00Z"), 0, new Set()).length, 0);
+
+// Second tenant arrives on the 18th: the reading that ran 1st-18th is billed
+// entirely to whoever was already there. The newcomer has no days in it.
+const handover = roomOccupantWeights(
+  [
+    { id: "first", joinDate: "2026-07-01" },
+    { id: "second", joinDate: "2026-08-18" },
+  ],
+  "2026-08-01",
+  "2026-08-18"
+);
+check("handover reading: newcomer has no share", handover.get("second"), 0);
+check("handover reading: existing tenant has all of it", handover.get("first"), 17);
 
 // splitByWeights is proportional, not even, and still exact to the paisa.
 check("split by weights 2:1", splitByWeights(300, [2, 1]), [200, 100]);
@@ -110,47 +183,6 @@ check("both overdue as of Aug 5", s.overdue, 3500);
 
 // A waived charge is owed by nobody.
 check("waived owes nothing", summariseCharges([{ ...charges[0], waived: true }]).total.outstanding, 0);
-
-// addCalendarMonths clamps to the target month's last day, unlike native
-// Date.setMonth (which would roll Jan 31 + 1 month into "Mar 3").
-check("add 1 month, Jan 31 -> Feb 28", addCalendarMonths("2026-01-31", 1).toISOString().slice(0, 10), "2026-02-28");
-check("add 1 month, normal case (UTC-stable)", addCalendarMonths("2026-08-05", 1).toISOString().slice(0, 10), "2026-09-05");
-check("add 0 months is a no-op", addCalendarMonths("2026-08-05", 0).toISOString().slice(0, 10), "2026-08-05");
-
-// The exact scenario rent cycles are built around: joined July 5, and as of
-// November 20 every cycle that's started since is due, July through
-// November, five of them, each on the same day-of-month they joined on.
-const cyclesSoFar = pendingRentCycles("2025-07-05", new Date("2025-11-20T00:00:00Z"), new Set());
-check(
-  "join July 5, as of Nov 20 -> 5 cycles due",
-  cyclesSoFar.map((c) => ({ start: c.start.toISOString().slice(0, 10), period: c.period })),
-  [
-    { start: "2025-07-05", period: "2025-07" },
-    { start: "2025-08-05", period: "2025-08" },
-    { start: "2025-09-05", period: "2025-09" },
-    { start: "2025-10-05", period: "2025-10" },
-    { start: "2025-11-05", period: "2025-11" },
-  ]
-);
-
-// Cycles already billed are skipped, not re-created.
-const partiallyBilled = pendingRentCycles(
-  "2025-07-05",
-  new Date("2025-11-20T00:00:00Z"),
-  new Set(["2025-07", "2025-08", "2025-09"])
-);
-check(
-  "already-billed cycles are skipped",
-  partiallyBilled.map((c) => c.period),
-  ["2025-10", "2025-11"]
-);
-
-// A cycle that hasn't started yet never appears, even with nothing billed.
-check(
-  "no cycles before the join date",
-  pendingRentCycles("2025-07-05", new Date("2025-07-04T00:00:00Z"), new Set()).length,
-  0
-);
 
 console.log(fails === 0 ? "\nAll checks passed." : `\n${fails} check(s) failed.`);
 process.exit(fails === 0 ? 0 : 1);

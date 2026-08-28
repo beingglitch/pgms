@@ -8,19 +8,20 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { BookOpen, IndianRupee, MessageCircle, Plus, Receipt, Search, Sparkles, X } from "lucide-react";
+import { BookOpen, IndianRupee, Plus, Receipt, Search, Sparkles, X } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { LedgerFormDialog } from "@/components/ledger-form-dialog";
 import { ChargeFormDialog } from "@/components/charge-form-dialog";
 import { ReceiptDialog } from "@/components/receipt-dialog";
 import { SendDuesReminderDialog } from "@/components/send-dues-reminder-dialog";
-import { Amount, EmptyState, KhataRow, PageTitle, Panel, StatTile } from "@/components/khata";
+import { Amount, EmptyState, KhataRow, PageTitle, Panel, SectionHeading, StatTile } from "@/components/khata";
+import { DuesAgingChart } from "@/components/dues-aging-chart";
 import { deleteLedgerEntry, listLedger } from "@/app/actions/ledger";
 import { listOutstandingByTenant, waiveCharge } from "@/app/actions/charges";
 import { deleteExpense, listExpenses } from "@/app/actions/expenses";
 import { listSecurityDeposits } from "@/app/actions/reports";
-import { chargeOutstanding, CHARGE_TYPE_LABELS, num, periodLabel } from "@/lib/charges";
+import { bucketDuesAging, chargeOutstanding, CHARGE_TYPE_LABELS, num, periodLabel } from "@/lib/charges";
 import { type Signature } from "@/lib/messages";
 import { useManager } from "@/lib/manager-context";
 import { inr, fmtDate, monthKey, initials, todayISO, daysFromNowISO, dateISO, paymentMethodLabel } from "@/lib/format";
@@ -41,6 +42,12 @@ type TenantOption = {
   room: { id: string } | null;
 };
 type FeedRow = { kind: "payment"; date: Date; data: Entry } | { kind: "expense"; date: Date; data: ExpenseRow };
+
+/** Earliest due date among a tenant's still-open charges, or +Infinity when they have none (sorts last). */
+function earliestDueDate(row: DueRow) {
+  const openDates = row.tenant.charges.filter((c) => chargeOutstanding(c) > 0.005).map((c) => new Date(c.dueDate).getTime());
+  return openDates.length > 0 ? Math.min(...openDates) : Infinity;
+}
 
 export function LedgerClient({
   entries,
@@ -81,6 +88,9 @@ export function LedgerClient({
 
   const totalOutstanding = dues.reduce((s, d) => s + d.summary.total.outstanding, 0);
   const overdueTotal = dues.reduce((s, d) => s + d.summary.overdue, 0);
+  const chequeTotal = deposits.tenants
+    .filter((t) => t.depositMethod === "CHEQUE")
+    .reduce((s, t) => s + num(t.depositAmount), 0);
 
   // Current: due today or overdue, the day a charge exists at all in the
   // normal case. Upcoming: due later, but inside the window Settings sets,
@@ -97,16 +107,25 @@ export function LedgerClient({
     });
   });
 
+  // Oldest overdue charge first, so the person who's owed the longest sorts
+  // to the top - the tenant a chase list should surface first.
+  const sortedDues = [...filteredDues].sort((a, b) => earliestDueDate(a) - earliestDueDate(b));
+
+  const agingBuckets = bucketDuesAging(
+    dues.flatMap((d) => d.tenant.charges),
+    today
+  );
+
   return (
     <div className="space-y-4">
       <PageTitle>Ledger</PageTitle>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as "payments" | "dues" | "security")}>
-        <TabsList className="w-full">
-          <TabsTrigger value="payments" className="flex-1">
+        <TabsList className="sticky top-0 z-10 w-full rounded-xl bg-muted p-[3px] shadow-[0_1px_0_var(--border)]">
+          <TabsTrigger value="payments" className="flex-1 rounded-lg text-[11.5px] font-bold">
             Payments
           </TabsTrigger>
-          <TabsTrigger value="dues" className="flex-1">
+          <TabsTrigger value="dues" className="flex-1 rounded-lg text-[11.5px] font-bold">
             Dues
             {dues.length > 0 && (
               <span className="ml-1.5 rounded-full bg-ledger px-1.5 py-0.5 text-[10px] font-bold text-ledger-foreground">
@@ -114,7 +133,7 @@ export function LedgerClient({
               </span>
             )}
           </TabsTrigger>
-          <TabsTrigger value="security" className="flex-1">
+          <TabsTrigger value="security" className="flex-1 rounded-lg text-[11.5px] font-bold">
             Security
           </TabsTrigger>
         </TabsList>
@@ -131,6 +150,16 @@ export function LedgerClient({
         </TabsContent>
 
         <TabsContent value="dues" className="mt-4 space-y-4">
+          {overdueTotal > 0 && (
+            <Panel>
+              <p className="font-display text-[15px] font-semibold tracking-tight">How old the {inr(overdueTotal)} is</p>
+              <p className="mb-1 text-[11.5px] leading-[1.45] text-muted-foreground">
+                Overdue balances, grouped by how many days late they are.
+              </p>
+              <DuesAgingChart buckets={agingBuckets} />
+            </Panel>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <StatTile label="Total pending" value={inr(totalOutstanding)} tone={totalOutstanding > 0 ? "owed" : "positive"} />
             <StatTile
@@ -172,60 +201,75 @@ export function LedgerClient({
                 ))}
               </div>
 
-              {filteredDues.length === 0 ? (
+              {sortedDues.length === 0 ? (
                 <EmptyState icon={Sparkles} title="Nothing here">
                   No dues match this filter right now.
                 </EmptyState>
               ) : (
-                <div className="space-y-3">
-                  {filteredDues.map((row) => (
-                    <DueCard
-                      key={row.tenant.id}
-                      row={row}
-                      manager={manager}
-                      onAddCharge={() => setChargeFor(row)}
-                      onRemind={() => setRemindTarget(row)}
-                      onPay={() => setPayTarget(row)}
-                      onChanged={() => router.refresh()}
-                    />
-                  ))}
-                </div>
+                <>
+                  <SectionHeading className="mb-0">Oldest first</SectionHeading>
+                  <div className="space-y-3">
+                    {sortedDues.map((row) => (
+                      <DueCard
+                        key={row.tenant.id}
+                        row={row}
+                        manager={manager}
+                        onAddCharge={() => setChargeFor(row)}
+                        onRemind={() => setRemindTarget(row)}
+                        onPay={() => setPayTarget(row)}
+                        onChanged={() => router.refresh()}
+                      />
+                    ))}
+                  </div>
+                </>
               )}
             </>
           )}
         </TabsContent>
 
         <TabsContent value="security" className="mt-4 space-y-4">
-          <StatTile label="Security held, all tenants" value={inr(deposits.total)} tone="held" />
-
           {deposits.tenants.length === 0 ? (
             <EmptyState icon={Sparkles} title="No deposits held">
               Security deposits show up here once tenants are onboarded with one.
             </EmptyState>
           ) : (
-            <Panel className="py-0">
-              {deposits.tenants.map((t) => {
-                const roomLabel = t.room ? `${t.room.floor.name} · Room ${t.room.number}` : t.roomNumber;
-                return (
-                  <KhataRow key={t.id} amount={<Amount value={t.depositAmount} tone="held" />}>
-                    <Link href={`/tenants/${t.id}`} className="flex items-center gap-2.5">
+            <div className="rounded-2xl border border-marigold/40 bg-marigold/[0.06] p-4">
+              <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-marigold-foreground">Deposits held</p>
+              <p className="mt-1 font-display text-[28px] font-bold leading-none tracking-tight text-marigold-foreground">
+                {inr(deposits.total)}
+              </p>
+              <p className="mt-1.5 text-xs text-marigold-foreground/80">
+                {deposits.tenants.length} tenant{deposits.tenants.length === 1 ? "" : "s"}
+                {chequeTotal > 0 ? ` · ${inr(chequeTotal)} of it as blank cheques` : ""}
+              </p>
+
+              <div className="mt-3 divide-y divide-marigold/20 border-t border-marigold/20">
+                {deposits.tenants.map((t) => {
+                  const roomLabel = t.room ? `${t.room.floor.name} · Room ${t.room.number}` : t.roomNumber;
+                  return (
+                    <Link
+                      key={t.id}
+                      href={`/tenants/${t.id}`}
+                      className="flex items-center gap-2.5 py-2.5 first:pt-3"
+                    >
                       <Avatar className="h-8 w-8">
                         <AvatarImage src={t.photoUrl ?? undefined} />
                         <AvatarFallback className="text-[10px]">{initials(t.name)}</AvatarFallback>
                       </Avatar>
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-semibold">{t.name}</p>
-                        <p className="truncate text-xs text-muted-foreground">
+                        <p className="truncate text-xs text-marigold-foreground/70">
                           {roomLabel || "No room"} · taken as{" "}
                           {t.depositMethod === "CHEQUE" ? "blank cheque" : paymentMethodLabel(t.depositMethod)} ·{" "}
                           {fmtDate(t.joinDate)}
                         </p>
                       </div>
+                      <span className="khata-amount text-sm text-marigold-foreground">{inr(t.depositAmount)}</span>
                     </Link>
-                  </KhataRow>
-                );
-              })}
-            </Panel>
+                  );
+                })}
+              </div>
+            </div>
           )}
           <p className="text-xs text-muted-foreground">
             This only shows deposits actually given. A tenant who still owes part of their deposit shows that as a
@@ -518,13 +562,29 @@ function PaymentsTab({
         </EmptyState>
       ) : (
         <Panel className="py-0">
-          {list.map((r) =>
-            r.kind === "payment" ? (
+          {list.map((r, i) => {
+            const period = monthKey(r.date);
+            const isNewMonth = i === 0 || monthKey(list[i - 1].date) !== period;
+            const monthCollected = isNewMonth
+              ? list
+                  .filter((row) => monthKey(row.date) === period && row.kind === "payment" && row.data.type !== "DEPOSIT" && row.data.type !== "REFUND")
+                  .reduce((s, row) => s + num((row.data as Entry).amount), 0)
+              : 0;
+
+            return (
+              <div key={r.data.id}>
+                {isNewMonth && (
+                  <div className="flex items-baseline justify-between border-b border-border/70 px-1 pt-3 pb-1.5 first:pt-1">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-muted-foreground">{periodLabel(period)}</p>
+                    <Amount value={monthCollected} tone="positive" size="sm" />
+                  </div>
+                )}
+                {r.kind === "payment" ? (
               <KhataRow
                 key={r.data.id}
                 amount={
                   <div className="text-right">
-                    <Amount value={r.data.amount} tone={r.data.type === "REFUND" ? "owed" : r.data.type === "DEPOSIT" ? "held" : "positive"} />
+                    <Amount value={r.data.amount} tone={r.data.type === "REFUND" ? "owed" : r.data.type === "DEPOSIT" ? "held" : "ink"} />
                     <div className="mt-0.5 flex items-center justify-end gap-2">
                       <button onClick={() => onReceipt(r.data)} className="text-[11px] font-semibold text-primary">
                         Receipt
@@ -550,7 +610,7 @@ function PaymentsTab({
                     </p>
                     <p className="truncate text-xs text-muted-foreground">
                       {fmtDate(r.data.date)} · {r.data.mode.replace("_", " ").toLowerCase()}
-                      {r.data.receiptNo ? <span className="serial"> · {r.data.receiptNo}</span> : null}
+                      {r.data.receiptNo ? <span className="serial font-mono"> · {r.data.receiptNo}</span> : null}
                     </p>
                     {r.data.allocations.length > 0 && (
                       <p className="truncate text-[11px] text-muted-foreground">
@@ -589,8 +649,10 @@ function PaymentsTab({
                   {r.data.note && <p className="truncate text-[11px] text-muted-foreground">{r.data.note}</p>}
                 </div>
               </KhataRow>
-            )
-          )}
+                )}
+              </div>
+            );
+          })}
         </Panel>
       )}
     </div>
@@ -628,6 +690,13 @@ function DueCard({
   const [confirmWaive, setConfirmWaive] = useState(false);
   const lastCharge = open[open.length - 1];
 
+  // The single oldest open charge, for the compact "Room 301 · Rent Jun · 63
+  // days late" line - the one fact that answers "why is this tenant here."
+  const oldest = [...open].sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())[0];
+  const oldestDaysLate = oldest
+    ? Math.round((new Date(today).getTime() - new Date(oldest.dueDate).getTime()) / 86400000)
+    : 0;
+
   async function toggleWaive(id: string, waived: boolean) {
     await waiveCharge(manager, id, waived);
     toast.success(waived ? "Charge waived" : "Waiver removed");
@@ -635,7 +704,7 @@ function DueCard({
   }
 
   return (
-    <Panel>
+    <Panel className="border-l-[3px] border-l-ledger p-3 pl-[11px]">
       <div className="mb-3 flex items-start justify-between gap-3">
         <Link href={`/tenants/${tenant.id}`} className="flex min-w-0 items-center gap-2.5">
           <Avatar className="h-9 w-9">
@@ -643,15 +712,20 @@ function DueCard({
             <AvatarFallback className="text-[10px]">{initials(tenant.name)}</AvatarFallback>
           </Avatar>
           <div className="min-w-0">
-            <p className="truncate font-display text-base font-semibold tracking-tight">{tenant.name}</p>
-            {roomLabel && <p className="truncate text-xs text-muted-foreground">{roomLabel}</p>}
+            <p className="truncate font-display text-[14px] font-bold tracking-tight">{tenant.name}</p>
+            <p className="truncate text-[11.5px] text-muted-foreground">
+              {[roomLabel, oldest ? `${CHARGE_TYPE_LABELS[oldest.type]} ${periodLabel(oldest.period).split(" ")[0]}` : null]
+                .filter(Boolean)
+                .join(" · ")}
+              {oldestDaysLate > 0 ? ` · ${oldestDaysLate} days late` : ""}
+            </p>
           </div>
         </Link>
         <div className="text-right">
           <Amount value={summary.total.outstanding} tone="owed" size="lg" />
-          {summary.overdue > 0 && (
-            <p className="text-[11px] font-semibold text-ledger">{inr(summary.overdue)} overdue</p>
-          )}
+          <button onClick={onRemind} className="mt-0.5 text-[11px] font-bold text-primary">
+            Remind
+          </button>
         </div>
       </div>
 
@@ -694,9 +768,6 @@ function DueCard({
       <div className="mt-3 flex flex-wrap gap-2 border-t border-border/70 pt-3">
         <Button size="sm" onClick={onPay}>
           <IndianRupee className="h-3.5 w-3.5" /> Paid
-        </Button>
-        <Button size="sm" variant="secondary" onClick={onRemind}>
-          <MessageCircle className="h-3.5 w-3.5" /> Send reminder
         </Button>
         <Button size="sm" variant="outline" onClick={onAddCharge}>
           <Plus className="h-3.5 w-3.5" /> Add charge

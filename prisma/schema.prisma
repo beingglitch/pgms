@@ -64,6 +64,13 @@ model PgInfo {
 
   /// Window the dashboard "due soon" counter looks ahead by.
   dueSoonDays      Int       @default(7)
+  /// How many days before the 1st next month's rent charge is created, so
+  /// it's on the books (and chaseable) ahead of the due date.
+  dueLeadDays      Int       @default(7)
+  /// Month (1 = Jan ... 12 = Dec) the financial year starts on, for the
+  /// dashboard's "collected this year" figure. India's FY runs April to
+  /// March, hence the default of 4.
+  fiscalYearStartMonth Int   @default(4)
   /// scrypt hash of the owner's password. Empty until first setup.
   passwordHash     String    @default("")
 }

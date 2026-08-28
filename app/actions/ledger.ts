@@ -4,26 +4,42 @@ import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "./activity";
 import { allocatePaymentToCharges, reallocateTenant } from "./charges";
-import { periodOf } from "@/lib/charges";
+import { num, periodOf } from "@/lib/charges";
+
+/**
+ * Prisma's Decimal isn't a plain object, so it can't cross the Server
+ * Component / Server Action boundary to client code as-is (the dev overlay
+ * flags it as a console error; a production RSC build would throw). Both
+ * the top-level amount and each allocation's amount need converting.
+ */
+function serialiseEntry<T extends { amount: unknown; allocations: { amount: unknown }[] }>(entry: T) {
+  return {
+    ...entry,
+    amount: num(entry.amount as never),
+    allocations: entry.allocations.map((a) => ({ ...a, amount: num(a.amount as never) })),
+  };
+}
 
 export async function listLedger() {
-  return prisma.ledgerEntry.findMany({
+  const entries = await prisma.ledgerEntry.findMany({
     orderBy: { date: "desc" },
     include: {
       tenant: { select: { id: true, name: true, photoUrl: true, roomNumber: true } },
       allocations: { include: { charge: { select: { type: true, description: true, period: true } } } },
     },
   });
+  return entries.map(serialiseEntry);
 }
 
 export async function getLedgerEntry(id: string) {
-  return prisma.ledgerEntry.findUnique({
+  const entry = await prisma.ledgerEntry.findUnique({
     where: { id },
     include: {
       tenant: true,
       allocations: { include: { charge: { select: { type: true, description: true, period: true } } } },
     },
   });
+  return entry ? serialiseEntry(entry) : null;
 }
 
 /**
@@ -45,6 +61,8 @@ export async function addLedgerEntry(
     date: string;
     mode: string;
     note?: string;
+    /** Settle this specific charge (one month's rent, say) first; the rest goes oldest-first. */
+    chargeId?: string;
   }
 ) {
   const date = new Date(input.date);
@@ -65,7 +83,7 @@ export async function addLedgerEntry(
   // Deposits and refunds move the deposit balance; they don't settle charges.
   let unallocated = 0;
   if (input.type === "RENT" || input.type === "OTHER") {
-    ({ unallocated } = await allocatePaymentToCharges(entry.id, input.tenantId, input.amount));
+    ({ unallocated } = await allocatePaymentToCharges(entry.id, input.tenantId, input.amount, input.chargeId));
   }
 
   await logActivity(

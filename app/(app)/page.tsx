@@ -2,37 +2,58 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { Amount, EmptyState, KhataRow, Panel, SectionHeading, StatTile } from "@/components/khata";
 import { getBuilding } from "@/app/actions/rooms";
-import { getDepositLiability } from "@/app/actions/reports";
-import { listOutstandingByTenant } from "@/app/actions/charges";
+import { getBilledByPeriod, getCollectionsByPeriod, getDepositLiability, getOccupancyHistory } from "@/app/actions/reports";
+import { generateDueRentCharges, listOutstandingByTenant } from "@/app/actions/charges";
 import { listActivity } from "@/app/actions/activity";
 import { getPgInfo } from "@/app/actions/settings";
-import { FinanceChart, type MonthFinance } from "@/components/finance-chart";
+import { DashboardChart, type MonthPoint } from "@/components/dashboard-chart";
+import { ChaseStrip, type ChaseRow } from "@/components/chase-strip";
+import { MonthSelect } from "@/components/month-select";
 import { inr, fmtDate, monthKey, todayISO, daysFromNowISO, dateISO } from "@/lib/format";
-import { chargeOutstanding, num, periodLabel, round2 } from "@/lib/charges";
+import { bucketDuesAging, chargeOutstanding, fiscalYearOf, num, periodLabel, round2 } from "@/lib/charges";
 import { ChevronRight, Sparkles, Wallet } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
-export default async function DashboardPage() {
-  const [building, deposits, dues, payments, activity, expenses, pgInfo] = await Promise.all([
-    getBuilding(),
-    getDepositLiability(),
-    listOutstandingByTenant(),
-    // Every payment, not a page of them. The old dashboard summed only the six
-    // most recent entries and under-reported the month.
-    prisma.ledgerEntry.findMany({
-      where: { type: { in: ["RENT", "OTHER"] } },
-      select: { amount: true, date: true, type: true },
-    }),
-    listActivity(8),
-    prisma.expense.findMany({ where: { active: true } }),
-    getPgInfo(),
-  ]);
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ month?: string }>;
+}) {
+  // Rent charges are created daily by the cron, but the owner opening the
+  // app is the surest daily event there is, so catch up here too. Idempotent
+  // and cheap when there's nothing to do; `revalidate: false` because this
+  // is a render, where revalidatePath isn't allowed.
+  await generateDueRentCharges("System", { revalidate: false });
+
+  const [building, deposits, dues, collectionsByPeriod, billedByPeriod, occupancyHistory, activity, expenses, pgInfo, params] =
+    await Promise.all([
+      getBuilding(),
+      getDepositLiability(),
+      listOutstandingByTenant(),
+      // Grouped by the billing period each payment actually paid off (via its
+      // charge allocations), not the date it happened to be paid on - so rent
+      // for June/July paid in August lands on June/July, not August.
+      getCollectionsByPeriod(),
+      getBilledByPeriod(),
+      getOccupancyHistory(6),
+      listActivity(3),
+      prisma.expense.findMany({ where: { active: true } }),
+      getPgInfo(),
+      searchParams,
+    ]);
 
   const thisMonth = monthKey(new Date());
+  const selectedMonth = params.month && /^\d{4}-\d{2}$/.test(params.month) && params.month <= thisMonth ? params.month : thisMonth;
 
-  const collectedThisMonth = round2(
-    payments.filter((p) => monthKey(p.date) === thisMonth).reduce((s, p) => s + num(p.amount), 0)
+  const collectedSelectedMonth = collectionsByPeriod.get(selectedMonth)?.collected ?? 0;
+  const billedSelectedMonth = billedByPeriod.get(selectedMonth) ?? 0;
+
+  const fiscalYear = fiscalYearOf(selectedMonth, pgInfo.fiscalYearStartMonth);
+  const rentCollectedThisFiscalYear = round2(
+    Array.from(collectionsByPeriod.entries())
+      .filter(([period]) => period >= fiscalYear.start && period <= fiscalYear.end)
+      .reduce((s, [, row]) => s + row.rent, 0)
   );
 
   const outstandingTotal = round2(dues.reduce((s, d) => s + d.summary.total.outstanding, 0));
@@ -63,35 +84,65 @@ export default async function DashboardPage() {
     }, 0)
   );
 
-  // Yearly costs are averaged so the figure means "per month" throughout.
-  const recurringExpenses = round2(
-    expenses.filter((e) => e.frequency === "MONTHLY").reduce((s, e) => s + num(e.amount), 0) +
-      expenses.filter((e) => e.frequency === "YEARLY").reduce((s, e) => s + num(e.amount) / 12, 0)
-  );
-  const oneTimeThisMonth = round2(
-    expenses
-      .filter((e) => e.frequency === "ONE_TIME" && monthKey(e.date) === thisMonth)
-      .reduce((s, e) => s + num(e.amount), 0)
-  );
-  const totalThisMonth = round2(recurringExpenses + oneTimeThisMonth);
+  // The progress bar only makes sense against the live "today", so it's tied
+  // to the real current month regardless of which month is picked above it.
+  const billedThisMonth = billedByPeriod.get(thisMonth) ?? 0;
+  const collectedThisMonth = collectionsByPeriod.get(thisMonth)?.collected ?? 0;
+  const pct = (n: number) => (billedThisMonth > 0 ? Math.round((n / billedThisMonth) * 100) : 0);
+  const collectedPct = pct(collectedThisMonth);
+  const dueSoonPct = pct(dueSoonTotal);
+  const overduePct = pct(overdueTotal);
 
-  // Two years back, oldest first. The chart itself only shows a handful at
-  // once, but keeps the rest around to pan and zoom into.
+  // Chase strip: everyone with something overdue, oldest-late first.
+  const chaseRows: ChaseRow[] = overdueRows
+    .map((d) => {
+      const overdueCharges = d.tenant.charges.filter((c) => chargeOutstanding(c) > 0.005 && dateISO(c.dueDate) < today);
+      if (overdueCharges.length === 0) return null;
+      const oldestDue = overdueCharges.reduce(
+        (min, c) => (dateISO(c.dueDate) < min ? dateISO(c.dueDate) : min),
+        dateISO(overdueCharges[0].dueDate)
+      );
+      const daysLate = Math.round((new Date(today).getTime() - new Date(oldestDue).getTime()) / 86400000);
+      const row: ChaseRow = {
+        tenant: {
+          id: d.tenant.id,
+          name: d.tenant.name,
+          phone: d.tenant.phone,
+          email: d.tenant.email,
+          roomNumber: d.tenant.roomNumber,
+          rentAmount: d.tenant.rentAmount,
+          room: d.tenant.room ? { id: d.tenant.room.id, number: d.tenant.room.number } : null,
+        },
+        outstanding: d.summary.total.outstanding,
+        daysLate,
+      };
+      return row;
+    })
+    .filter((r): r is ChaseRow => r !== null)
+    .sort((a, b) => b.daysLate - a.daysLate);
+
+  // The month picker goes back further than the chart: a plain 12 calendar
+  // years of months, independent of the fiscal-year start setting.
+  const pickerMonths: string[] = [];
+  for (let i = 143; i >= 0; i--) {
+    const d = new Date();
+    d.setMonth(d.getMonth() - i);
+    pickerMonths.push(monthKey(d));
+  }
+
+  // The chart card's own fixed 6-month window (no zoom/pan, per the redesign).
   const chartMonths: string[] = [];
-  for (let i = 23; i >= 0; i--) {
+  for (let i = 5; i >= 0; i--) {
     const d = new Date();
     d.setMonth(d.getMonth() - i);
     chartMonths.push(monthKey(d));
   }
-  const financeData: MonthFinance[] = chartMonths.map((period) => {
-    const collected = round2(
-      payments.filter((p) => monthKey(p.date) === period).reduce((s, p) => s + num(p.amount), 0)
-    );
-    const rent = round2(
-      payments
-        .filter((p) => monthKey(p.date) === period && p.type === "RENT")
-        .reduce((s, p) => s + num(p.amount), 0)
-    );
+  const monthShort = (period: string) => periodLabel(period).split(" ")[0].slice(0, 3);
+
+  const chartData: MonthPoint[] = chartMonths.map((period) => {
+    const row = collectionsByPeriod.get(period);
+    const collected = row?.collected ?? 0;
+    const billed = billedByPeriod.get(period) ?? 0;
     const oneTime = expenses
       .filter((e) => e.frequency === "ONE_TIME" && monthKey(e.date) === period)
       .reduce((s, e) => s + num(e.amount), 0);
@@ -101,20 +152,51 @@ export default async function DashboardPage() {
     const yearly = expenses
       .filter((e) => e.frequency === "YEARLY" && monthKey(e.date) <= period)
       .reduce((s, e) => s + num(e.amount) / 12, 0);
-    return { period, collected, rent, spend: round2(oneTime + monthly + yearly) };
+    const spend = round2(oneTime + monthly + yearly);
+    return {
+      period,
+      short: monthShort(period),
+      billed,
+      collected,
+      spend,
+      net: round2(collected - spend),
+      ratePct: billed > 0 ? Math.round((collected / billed) * 100) : 100,
+    };
   });
+
+  const occupiedPoints = occupancyHistory.map((p) => ({ ...p, short: monthShort(p.period) }));
+
+  const allOutstandingCharges = dues.flatMap((d) => d.tenant.charges);
+  const agingBuckets = bucketDuesAging(allOutstandingCharges, today);
+
+  // Bed-by-bed status for the segmented strip: filled / on notice / vacant.
+  // Derived here (not from getBuilding, which doesn't carry notice state) by
+  // cross-referencing the same tenants already loaded for "leaving soon".
+  const noticeTenantIds = new Set(deposits.leavingSoon.map((t) => t.id));
+  const bedStatuses = building.floors.flatMap((f) =>
+    f.rooms.flatMap((r) => r.beds.map((b) => (!b.tenant ? "vacant" : noticeTenantIds.has(b.tenant.id) ? "notice" : "filled")))
+  );
 
   return (
     <div className="space-y-5">
       {/* The hero answers the question the owner opens the app to ask. */}
       <section>
-        <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
-          {periodLabel(thisMonth)}
-        </p>
+        <MonthSelect months={pickerMonths} value={selectedMonth} />
         <div className="mt-1 flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
           <div>
-            <Amount value={collectedThisMonth} tone="positive" size="xl" />
-            <p className="mt-0.5 text-sm text-muted-foreground">collected this month</p>
+            <span className="flex items-baseline gap-1.5">
+              <Amount value={collectedSelectedMonth} tone="positive" size="xl" />
+              {billedSelectedMonth > 0 && (
+                <span className="text-sm text-muted-foreground">of {inr(billedSelectedMonth)} billed</span>
+              )}
+            </span>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              {selectedMonth === thisMonth ? "collected this month" : `collected in ${periodLabel(selectedMonth)}`}
+            </p>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              <strong className="tabular text-foreground">{inr(rentCollectedThisFiscalYear)}</strong> rent collected
+              in {fiscalYear.label}
+            </p>
           </div>
           {outstandingTotal > 0 && (
             <Link href="/ledger?tab=dues" className="group text-right">
@@ -126,38 +208,56 @@ export default async function DashboardPage() {
             </Link>
           )}
         </div>
+
+        {billedThisMonth > 0 && (
+          <div className="mt-3">
+            <div className="flex h-[9px] w-full overflow-hidden rounded-full bg-border">
+              <div className="h-full bg-chart-rent" style={{ width: `${Math.min(100, collectedPct)}%` }} />
+              <div className="h-full bg-marigold" style={{ width: `${Math.min(100 - collectedPct, dueSoonPct)}%` }} />
+            </div>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              {collectedPct}% collected · {dueSoonPct}% due in {pgInfo.dueSoonDays} days · {overduePct}% overdue
+            </p>
+          </div>
+        )}
       </section>
+
+      <ChaseStrip
+        rows={chaseRows}
+        tenants={dues.map((d) => d.tenant)}
+        signature={{ pgName: pgInfo.name, ownerName: pgInfo.ownerName, contact: pgInfo.contact }}
+        paymentLink={pgInfo.paymentLink}
+      />
 
       <div className="grid grid-cols-2 gap-3">
         <StatTile
           label="Beds filled"
           value={`${building.totals.occupied}/${building.totals.beds}`}
           hint={
-            building.totals.beds > 0
-              ? `${building.totals.beds - building.totals.occupied} vacant`
-              : "Map out your rooms"
+            <span className="mt-0.5 flex gap-[3px]">
+              {bedStatuses.length === 0 ? (
+                <span className="text-muted-foreground">Map out your rooms</span>
+              ) : (
+                bedStatuses.map((status, i) => (
+                  <span
+                    key={i}
+                    className={
+                      "h-2 flex-1 rounded-sm " +
+                      (status === "filled" ? "bg-primary" : status === "notice" ? "bg-marigold" : "bg-input")
+                    }
+                  />
+                ))
+              )}
+            </span>
           }
           href="/rooms"
         />
         <StatTile
           label="Overdue"
-          value={overdueRows.length}
+          value={inr(overdueTotal)}
           tone={overdueRows.length > 0 ? "owed" : "muted"}
-          hint={overdueRows.length > 0 ? `${inr(overdueTotal)} past due` : "Nobody is late"}
+          hint={overdueRows.length > 0 ? `${overdueRows.length} tenants · oldest ${chaseRows[0]?.daysLate ?? 0} days` : "Nobody is late"}
           href="/ledger?tab=dues&filter=current"
-        />
-        <StatTile
-          label={`Due in ${pgInfo.dueSoonDays} days`}
-          value={dueSoonRows.length}
-          tone={dueSoonRows.length > 0 ? "owed" : "muted"}
-          hint={dueSoonRows.length > 0 ? `${inr(dueSoonTotal)} coming up` : "Nothing coming up"}
-          href="/ledger?tab=dues&filter=upcoming"
-        />
-        <StatTile
-          label="Monthly running costs"
-          value={inr(totalThisMonth)}
-          hint={`${inr(recurringExpenses)} recurring`}
-          href="/expenses"
         />
       </div>
 
@@ -180,15 +280,12 @@ export default async function DashboardPage() {
         </Panel>
       )}
 
-      <Panel>
-        <SectionHeading>Collections, rent, and spends</SectionHeading>
-        <FinanceChart data={financeData} />
-      </Panel>
+      <DashboardChart months={chartData} occupied={occupiedPoints} capacity={building.totals.beds} aging={agingBuckets} />
 
       <Panel>
         <SectionHeading
           action={
-            <Link href="/settings" className="text-xs font-semibold text-primary">
+            <Link href="/activity" className="text-xs font-semibold text-primary">
               Full log
             </Link>
           }

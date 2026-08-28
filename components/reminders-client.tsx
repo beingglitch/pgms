@@ -4,8 +4,9 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CheckCircle2, Search, Send } from "lucide-react";
+import { CheckCircle2, MessageCircle, Search, Send } from "lucide-react";
 import { SendDuesReminderDialog } from "@/components/send-dues-reminder-dialog";
 import { Amount, EmptyState, KhataRow, PageTitle, Panel, SectionHeading, StatTile } from "@/components/khata";
 import { getReminderHistory } from "@/app/actions/reminders";
@@ -34,8 +35,44 @@ export function RemindersClient({
   const [customFor, setCustomFor] = useState<DueRow | null>(null);
   const [chaseQuery, setChaseQuery] = useState("");
   const [sentQuery, setSentQuery] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // The remaining tenants to step through after the current dialog closes,
+  // when sending was started from the selection bar rather than one card.
+  const [queue, setQueue] = useState<DueRow[]>([]);
 
   const totalToChase = dues.reduce((s, d) => s + d.summary.total.outstanding, 0);
+
+  function toggleSelected(tenantId: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(tenantId)) next.delete(tenantId);
+      else next.add(tenantId);
+      return next;
+    });
+  }
+
+  function sendToSelected() {
+    const rows = dues.filter((d) => selected.has(d.tenant.id));
+    if (rows.length === 0) return;
+    setQueue(rows.slice(1));
+    setCustomFor(rows[0]);
+  }
+
+  function advanceQueue() {
+    setSelected((prev) => {
+      if (!customFor) return prev;
+      const next = new Set(prev);
+      next.delete(customFor.tenant.id);
+      return next;
+    });
+    if (queue.length > 0) {
+      setCustomFor(queue[0]);
+      setQueue(queue.slice(1));
+    } else {
+      setCustomFor(null);
+      router.refresh();
+    }
+  }
 
   const chaseQ = chaseQuery.trim().toLowerCase();
   const filteredDues = chaseQ
@@ -48,9 +85,23 @@ export function RemindersClient({
   const sentQ = sentQuery.trim().toLowerCase();
   const filteredLogs = sentQ ? history.logs.filter((log) => (log.detail ?? "").toLowerCase().includes(sentQ)) : history.logs;
 
+  const now = new Date();
+  const sentThisMonth = history.logs.filter(
+    (log) => log.ts.getFullYear() === now.getFullYear() && log.ts.getMonth() === now.getMonth()
+  ).length;
+
   return (
     <div className="space-y-4">
       <PageTitle>Reminders</PageTitle>
+
+      {selected.size > 0 && (
+        <Panel className="flex items-center justify-between gap-3 rounded-2xl p-3">
+          <p className="text-[12.5px] font-semibold">{selected.size} selected</p>
+          <Button size="sm" onClick={sendToSelected}>
+            <MessageCircle className="h-3.5 w-3.5" /> Send on WhatsApp
+          </Button>
+        </Panel>
+      )}
 
       <StatTile label="To chase" value={dues.length} tone={dues.length ? "owed" : "positive"} hint={inr(totalToChase)} />
 
@@ -92,6 +143,8 @@ export function RemindersClient({
                     key={row.tenant.id}
                     row={row}
                     lastSent={history.lastSentByTenant[row.tenant.id]}
+                    checked={selected.has(row.tenant.id)}
+                    onToggle={() => toggleSelected(row.tenant.id)}
                     onSend={() => setCustomFor(row)}
                   />
                 ))
@@ -139,6 +192,9 @@ export function RemindersClient({
               &ldquo;Sent&rdquo; means the message was handed to WhatsApp or your mail app. This app can&apos;t
               confirm it was delivered or read.
             </p>
+            {sentThisMonth > 0 && (
+              <p className="mt-1 text-xs text-muted-foreground">{sentThisMonth} reminders sent this month.</p>
+            )}
           </Panel>
         </TabsContent>
       </Tabs>
@@ -147,10 +203,7 @@ export function RemindersClient({
         <SendDuesReminderDialog
           open={!!customFor}
           onOpenChange={(o) => {
-            if (!o) {
-              setCustomFor(null);
-              router.refresh();
-            }
+            if (!o) advanceQueue();
           }}
           tenantId={customFor.tenant.id}
           tenantName={customFor.tenant.name}
@@ -166,7 +219,19 @@ export function RemindersClient({
   );
 }
 
-function ChaseCard({ row, lastSent, onSend }: { row: DueRow; lastSent?: Date; onSend: () => void }) {
+function ChaseCard({
+  row,
+  lastSent,
+  checked,
+  onToggle,
+  onSend,
+}: {
+  row: DueRow;
+  lastSent?: Date;
+  checked: boolean;
+  onToggle: () => void;
+  onSend: () => void;
+}) {
   const { tenant, summary } = row;
   const open = tenant.charges.filter((c) => chargeOutstanding(c) > 0.005);
   const roomLabel = tenant.room ? `Room ${tenant.room.number}` : tenant.roomNumber;
@@ -174,19 +239,27 @@ function ChaseCard({ row, lastSent, onSend }: { row: DueRow; lastSent?: Date; on
   return (
     <Panel>
       <div className="mb-2 flex items-start justify-between gap-3">
-        <Link href={`/tenants/${tenant.id}`} className="flex min-w-0 items-center gap-2.5">
-          <Avatar className="h-9 w-9">
-            <AvatarImage src={tenant.photoUrl ?? undefined} />
-            <AvatarFallback className="text-[10px]">{initials(tenant.name)}</AvatarFallback>
-          </Avatar>
-          <div className="min-w-0">
-            <p className="truncate font-display text-base font-semibold tracking-tight">{tenant.name}</p>
-            <p className="truncate text-xs text-muted-foreground">
-              {roomLabel || "No room"}
-              {lastSent ? ` · last reminded ${fmtDate(lastSent)}` : " · not reminded yet"}
-            </p>
-          </div>
-        </Link>
+        <div className="flex min-w-0 items-center gap-2.5">
+          <Checkbox
+            checked={checked}
+            onCheckedChange={onToggle}
+            aria-label={`Select ${tenant.name}`}
+            className="mt-0.5 h-[22px] w-[22px] shrink-0 rounded-[7px] border-input data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground"
+          />
+          <Link href={`/tenants/${tenant.id}`} className="flex min-w-0 items-center gap-2.5">
+            <Avatar className="h-9 w-9">
+              <AvatarImage src={tenant.photoUrl ?? undefined} />
+              <AvatarFallback className="text-[10px]">{initials(tenant.name)}</AvatarFallback>
+            </Avatar>
+            <div className="min-w-0">
+              <p className="truncate font-display text-base font-semibold tracking-tight">{tenant.name}</p>
+              <p className="truncate text-xs text-muted-foreground">
+                {roomLabel || "No room"}
+                {lastSent ? ` · last reminded ${fmtDate(lastSent)}` : " · not reminded yet"}
+              </p>
+            </div>
+          </Link>
+        </div>
         <div className="text-right">
           <Amount value={summary.total.outstanding} tone="owed" size="lg" />
           {summary.overdue > 0 && <p className="text-[11px] font-semibold text-ledger">{inr(summary.overdue)} overdue</p>}

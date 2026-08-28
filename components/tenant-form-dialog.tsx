@@ -16,7 +16,8 @@ import {
 import { PhotoUpload } from "@/components/photo-upload";
 import { useManager } from "@/lib/manager-context";
 import { createTenant, updateTenant, updateAgreementFields, type TenantInput, type AgreementInput } from "@/app/actions/tenants";
-import { todayISO, inr } from "@/lib/format";
+import { todayISO, inr, fmtDate } from "@/lib/format";
+import { dayRangeLabel, pendingRentPeriods, periodLabel } from "@/lib/charges";
 import { waLink } from "@/lib/messaging";
 import { Plus, X, Download, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
@@ -205,6 +206,20 @@ export function TenantFormDialog({
       toast.error("Name and phone are required");
       return;
     }
+    // A picked room always needs a meter number and a photo: it either
+    // starts the room's first reading or closes the current one for the
+    // people already there, and both need real proof.
+    if (isNew && pickedRoomId) {
+      const reading = Number(meterStartReading);
+      if (meterStartReading.trim() === "" || !Number.isFinite(reading) || reading < 0) {
+        toast.error("Enter the current meter reading for this room");
+        return;
+      }
+      if (!meterStartPhotoUrl) {
+        toast.error("Add a photo of the meter as proof of the reading");
+        return;
+      }
+    }
     setSaving(true);
     try {
       if (isNew) {
@@ -247,7 +262,7 @@ export function TenantFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => (o ? onOpenChange(o) : close())}>
-      <DialogContent className="max-h-[92vh] max-w-2xl overflow-y-auto">
+      <DialogContent className="max-h-[92vh] sm:max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {submitted ? "Tenant onboarded" : isNew ? "Onboard a new tenant" : "Edit tenant"}
@@ -328,22 +343,25 @@ export function TenantFormDialog({
               {pickedRoom && (
                 <p className="mt-2 text-xs text-muted-foreground">
                   Bed assigned automatically (first free one). Rent set to {inr(pickedRoom.perBed)}, this
-                  room&apos;s per-bed share.
-                  {pickedRoom.occupied > 0 &&
-                    " Their first rent charge is pro-rated up to their roommate's due-day, then billed on that same day every month after."}
+                  room&apos;s per-bed share. Rent is per calendar month: the join month is charged from the day
+                  after joining, every month after is due on the 1st.
                 </p>
               )}
 
-              {pickedRoom && pickedRoom.occupied === 0 && !pickedRoom.hasOpenReading && (
+              {pickedRoom && (
                 <div className="mt-3 border-t border-border/70 pt-3">
-                  <Label className="mb-1.5">Starting meter reading</Label>
+                  <Label className="mb-1.5">
+                    Current meter reading <span className="text-destructive">*</span>
+                  </Label>
                   <p className="mb-2 text-xs text-muted-foreground">
-                    Nobody&apos;s living here right now, so capture the current number and a photo as proof before
-                    they move in, the first electricity bill needs a real starting point.
+                    {pickedRoom.occupied > 0
+                      ? "Someone already lives here. Their reading so far will be closed at this number today and billed to them; the new tenant's electricity starts from this number."
+                      : "Nobody's living here right now: capture the current meter number and a photo before they move in."}
                   </p>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <Input
                       type="number"
+                      min={0}
                       placeholder="Meter reading"
                       value={meterStartReading}
                       onChange={(e) => setMeterStartReading(e.target.value)}
@@ -385,11 +403,14 @@ export function TenantFormDialog({
                   onChange={(e) => setAdvancePayment(e.target.value)}
                 />
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Settles this month&apos;s rent. Anything short stays due on the dashboard.
+                  Settles the oldest month first (their join month), then the next. Anything short stays due on
+                  the dashboard.
                 </p>
               </Field>
             )}
           </div>
+
+          {isNew && <BillingPreview rentAmount={f.rentAmount} joinDate={f.joinDate} />}
 
           <p className="text-xs font-bold uppercase tracking-wide text-amber-700">Security deposit</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -561,6 +582,54 @@ function Field({ label, required, children }: { label: string; required?: boolea
         {required && <span className="text-destructive"> *</span>}
       </Label>
       {children}
+    </div>
+  );
+}
+
+const PREVIEW_LEAD_DAYS = 7;
+const PREVIEW_MAX_ROWS = 6;
+
+/**
+ * Every rent charge that will land on the books the moment this tenant is
+ * saved: the join month pro-rated, then one full month each up to the lead
+ * window. Someone entered today but living here since April sees April
+ * through the current month listed, each to be settled on its own.
+ */
+function BillingPreview({ rentAmount, joinDate }: { rentAmount: number; joinDate: string }) {
+  const join = new Date(joinDate);
+  if (!(rentAmount > 0) || !joinDate || isNaN(join.getTime())) return null;
+
+  const plans = pendingRentPeriods(rentAmount, joinDate, new Date(), PREVIEW_LEAD_DAYS, new Set());
+  if (plans.length === 0) return null;
+
+  const visible = plans.slice(0, PREVIEW_MAX_ROWS);
+  const hidden = plans.length - visible.length;
+
+  return (
+    <div className="rounded-xl border border-border bg-muted/30 p-3">
+      <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Rent that will be created on save</p>
+      <p className="mb-2 mt-1 text-xs text-muted-foreground">
+        Rent is per calendar month. The month they join is charged from the day after joining; every month after
+        that is due on the 1st and appears {PREVIEW_LEAD_DAYS} days before.
+      </p>
+      <div className="divide-y divide-border/70">
+        {visible.map((p) => (
+          <div key={p.period} className="flex items-center justify-between gap-3 py-1.5 text-sm">
+            <span className="min-w-0 truncate">
+              <span className="font-semibold">{periodLabel(p.period)}</span>
+              {p.partial && (
+                <span className="text-muted-foreground">
+                  {" · "}
+                  {dayRangeLabel(p.partial.from, p.partial.to)} · {p.days} days
+                </span>
+              )}
+              <span className="text-muted-foreground"> · due {fmtDate(p.dueDate)}</span>
+            </span>
+            <span className="tabular shrink-0 font-semibold">{inr(p.amount)}</span>
+          </div>
+        ))}
+      </div>
+      {hidden > 0 && <p className="mt-1.5 text-xs text-muted-foreground">+{hidden} more month{hidden === 1 ? "" : "s"}</p>}
     </div>
   );
 }

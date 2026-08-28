@@ -6,23 +6,47 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ClipboardList, Download, KeyRound, Loader2 } from "lucide-react";
+import { Download, KeyRound, Loader2 } from "lucide-react";
 import { updatePgInfo } from "@/app/actions/settings";
 import { changePassword } from "@/app/actions/auth";
 import { exportAllData } from "@/app/actions/reports";
 import { PhotoUpload } from "@/components/photo-upload";
-import { PageTitle, Panel, SectionHeading } from "@/components/khata";
+import { PageTitle, Panel } from "@/components/khata";
 import { useManager } from "@/lib/manager-context";
 import { toast } from "sonner";
-import type { PgInfoModel, ActivityLogModel } from "@/lib/generated/prisma/models";
+import type { PgInfoModel } from "@/lib/generated/prisma/models";
 
-export function SettingsClient({ pgInfo, activity }: { pgInfo: PgInfoModel; activity: ActivityLogModel[] }) {
+type PgInfo = Omit<PgInfoModel, "electricityRatePerUnit"> & { electricityRatePerUnit: number };
+
+const MONTH_NAMES = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+const FY_MONTH_ITEMS = Object.fromEntries(MONTH_NAMES.map((name, i) => [String(i + 1), name]));
+const LEAD_DAY_ITEMS: Record<string, string> = {
+  "0": "On the 1st itself",
+  "3": "3 days before",
+  "7": "7 days before",
+  "10": "10 days before",
+  "15": "15 days before",
+};
+
+export function SettingsClient({ pgInfo }: { pgInfo: PgInfo }) {
   const router = useRouter();
   const { manager, setManager } = useManager();
   const [pg, setPg] = useState(pgInfo);
   const [rate, setRate] = useState(Number(pgInfo.electricityRatePerUnit));
   const [ownerDraft, setOwnerDraft] = useState(manager);
-  const [showLog, setShowLog] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   async function saveDetails() {
@@ -36,6 +60,8 @@ export function SettingsClient({ pgInfo, activity }: { pgInfo: PgInfoModel; acti
       paymentLink: pg.paymentLink,
       electricityRatePerUnit: rate,
       dueSoonDays: pg.dueSoonDays,
+      dueLeadDays: pg.dueLeadDays,
+      fiscalYearStartMonth: pg.fiscalYearStartMonth,
     });
     toast.success("Settings saved");
     router.refresh();
@@ -166,8 +192,53 @@ export function SettingsClient({ pgInfo, activity }: { pgInfo: PgInfoModel; acti
           <p className="mt-1 text-xs text-muted-foreground">Drives the dashboard counter.</p>
         </div>
         <div>
+          <Label className="mb-1.5">Create next month&apos;s rent</Label>
+          <Select
+            items={LEAD_DAY_ITEMS}
+            value={String(pg.dueLeadDays)}
+            onValueChange={(v) => v && setPg({ ...pg, dueLeadDays: Number(v) })}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(LEAD_DAY_ITEMS).map(([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Rent is due on the 1st of every month. This is how far ahead the charge appears, so you can start
+            chasing it before the month begins.
+          </p>
+        </div>
+        <div>
           <Label className="mb-1.5">Electricity rate (₹ per unit)</Label>
           <Input type="number" value={rate} onChange={(e) => setRate(Number(e.target.value))} />
+        </div>
+        <div>
+          <Label className="mb-1.5">Financial year starts in</Label>
+          <Select
+            items={FY_MONTH_ITEMS}
+            value={String(pg.fiscalYearStartMonth)}
+            onValueChange={(v) => v && setPg({ ...pg, fiscalYearStartMonth: Number(v) })}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {MONTH_NAMES.map((name, i) => (
+                <SelectItem key={name} value={String(i + 1)}>
+                  {name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Drives the dashboard&apos;s &ldquo;collected this year&rdquo; figure. India&apos;s FY is April.
+          </p>
         </div>
         <Button onClick={saveDetails}>Save billing settings</Button>
       </Panel>
@@ -186,26 +257,6 @@ export function SettingsClient({ pgInfo, activity }: { pgInfo: PgInfoModel; acti
           {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
           {exporting ? "Preparing…" : "Download all data (CSV)"}
         </Button>
-      </Panel>
-
-      <Panel>
-        <SectionHeading>Activity log</SectionHeading>
-        <p className="mb-3 text-xs text-muted-foreground">Every action taken in this app is recorded here.</p>
-        <Button variant="outline" size="sm" onClick={() => setShowLog((s) => !s)}>
-          <ClipboardList className="h-3.5 w-3.5" /> {showLog ? "Hide" : "View"} activity log
-        </Button>
-        {showLog && (
-          <div className="mt-3 max-h-72 space-y-2 overflow-y-auto">
-            {activity.length === 0 && <p className="text-xs text-muted-foreground">No activity yet.</p>}
-            {activity.map((l) => (
-              <div key={l.id} className="border-b border-border/70 pb-2 text-xs last:border-b-0">
-                <span className="font-semibold">{l.actor}</span> · {l.action}
-                {l.detail ? <span className="text-muted-foreground">: {l.detail}</span> : null}
-                <div className="text-muted-foreground">{new Date(l.ts).toLocaleString("en-IN")}</div>
-              </div>
-            ))}
-          </div>
-        )}
       </Panel>
     </div>
   );

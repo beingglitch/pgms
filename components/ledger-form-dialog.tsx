@@ -25,10 +25,13 @@ export function LedgerFormDialog({
   fixedTenantId,
   defaultAmount,
   outstandingAmount,
+  chargeId,
+  chargeLabel,
+  chargeType,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  tenants: Pick<TenantModel, "id" | "name" | "roomNumber" | "rentAmount">[];
+  tenants: (Pick<TenantModel, "id" | "name" | "roomNumber"> & { rentAmount: number | string | { toString(): string } })[];
   fixedTenantId?: string;
   defaultAmount?: number;
   /**
@@ -38,11 +41,20 @@ export function LedgerFormDialog({
    * rent going forward" (irrelevant here) to "how much is left after this".
    */
   outstandingAmount?: number;
+  /**
+   * Paying off one specific charge (one month's rent, say): that charge is
+   * settled first, with only any remainder flowing to the others. The type
+   * follows the charge and isn't asked for.
+   */
+  chargeId?: string;
+  /** What that charge is, for the "Paying: ..." line, e.g. "Rent · August 2026". */
+  chargeLabel?: string;
+  chargeType?: "RENT" | "ELECTRICITY" | "LAUNDRY" | "OTHER";
 }) {
   const router = useRouter();
   const { manager } = useManager();
   const [tenantId, setTenantId] = useState(fixedTenantId || tenants[0]?.id || "");
-  const [type, setType] = useState<"RENT" | "DEPOSIT" | "OTHER">("RENT");
+  const [type, setType] = useState<"RENT" | "DEPOSIT" | "OTHER">(chargeId ? (chargeType === "RENT" ? "RENT" : "OTHER") : "RENT");
   const [amount, setAmount] = useState(() => {
     if (outstandingAmount) return String(outstandingAmount);
     if (defaultAmount) return String(defaultAmount);
@@ -84,6 +96,7 @@ export function LedgerFormDialog({
   // be their new rent going forward?".
   const rentChanged =
     outstandingAmount === undefined &&
+    !chargeId &&
     type === "RENT" &&
     !!selectedTenant &&
     amount !== "" &&
@@ -107,7 +120,7 @@ export function LedgerFormDialog({
       if (permanentRentChange && selectedTenant) {
         await updateTenant(manager, selectedTenant.id, { rentAmount: Number(amount) });
       }
-      await addLedgerEntry(manager, { tenantId, type, amount: Number(amount), date, mode, note: note || undefined });
+      await addLedgerEntry(manager, { tenantId, type, amount: Number(amount), date, mode, note: note || undefined, chargeId });
       toast.success("Transaction recorded");
       setRentPrompt(false);
       onOpenChange(false);
@@ -124,11 +137,20 @@ export function LedgerFormDialog({
           <DialogTitle>{outstandingAmount !== undefined ? "Record payment" : "Record a transaction"}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
-          {outstandingAmount !== undefined && (
+          {chargeId ? (
             <p className="rounded-lg bg-muted/50 px-3 py-2 text-sm">
-              <span className="font-semibold">{selectedTenant?.name}</span> owes{" "}
-              <span className="font-semibold">{inr(outstandingAmount)}</span> right now.
+              Paying: <span className="font-semibold">{chargeLabel ?? "this charge"}</span>
+              {outstandingAmount !== undefined && (
+                <span className="text-muted-foreground"> ({inr(outstandingAmount)} outstanding)</span>
+              )}
             </p>
+          ) : (
+            outstandingAmount !== undefined && (
+              <p className="rounded-lg bg-muted/50 px-3 py-2 text-sm">
+                <span className="font-semibold">{selectedTenant?.name}</span> owes{" "}
+                <span className="font-semibold">{inr(outstandingAmount)}</span> right now.
+              </p>
+            )
           )}
           {!fixedTenantId && (
             <div>
@@ -145,7 +167,7 @@ export function LedgerFormDialog({
               </Select>
             </div>
           )}
-          {outstandingAmount === undefined && (
+          {outstandingAmount === undefined && !chargeId && (
             <div>
               <Label className="mb-1">Type</Label>
               <Select items={TYPE_ITEMS} value={type} onValueChange={(v) => v && selectType(v as typeof type)}>
@@ -189,8 +211,10 @@ export function LedgerFormDialog({
             {remainingAfterPayment !== undefined && (
               <p className="mt-1 text-xs text-muted-foreground">
                 {remainingAfterPayment > 0
-                  ? `${inr(remainingAfterPayment)} still left after this payment.`
-                  : "Settles everything they owe."}
+                  ? `${inr(remainingAfterPayment)} still left ${chargeId ? "on this charge" : ""} after this payment.`
+                  : chargeId
+                    ? "Settles this charge. Anything extra goes to their oldest other dues."
+                    : "Settles everything they owe."}
               </p>
             )}
           </div>

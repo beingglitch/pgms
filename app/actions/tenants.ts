@@ -3,8 +3,8 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "./activity";
-import { chargeOutstanding, nextAnchorOccurrence, planAllocations } from "@/lib/charges";
-import { generateFirstRentCharge, generateSyncedFirstRentCharge } from "./charges";
+import { chargeOutstanding, planAllocations } from "@/lib/charges";
+import { generateDueRentCharges } from "./charges";
 import {
   closeElectricityReading,
   getOpenReadingForRoom,
@@ -77,30 +77,54 @@ export async function getTenant(id: string) {
     include: {
       room: { include: { floor: { select: { name: true } } } },
       agreements: { orderBy: { version: "desc" } },
-      ledgerEntries: { orderBy: { date: "desc" } },
-      electricityBills: { orderBy: { endDate: "desc" } },
+      ledgerEntries: {
+        orderBy: { date: "desc" },
+        include: { allocations: { select: { amount: true, charge: { select: { period: true, type: true } } } } },
+      },
+      // Readings the tenant was ever party to: their own legacy ones, plus
+      // every reading of the room they're in (including ones closed before
+      // they arrived, which is what makes "the first tenant's reading doesn't
+      // disappear when the second moves in" visible on both their pages).
+      electricityBills: { orderBy: { startDate: "desc" } },
       reminders: { where: { status: "PENDING" }, orderBy: { dueDate: "asc" } },
       checkoutDeductions: true,
       charges: {
         orderBy: [{ dueDate: "desc" }, { createdAt: "desc" }],
-        include: { allocations: { select: { amount: true } } },
+        include: {
+          allocations: {
+            select: { amount: true, ledgerEntry: { select: { id: true, date: true, receiptNo: true, mode: true } } },
+          },
+          sourceBill: {
+            select: { id: true, startDate: true, endDate: true, startReading: true, endReading: true, units: true, photoUrl: true },
+          },
+        },
       },
     },
   });
 }
 
 export async function createTenant(actor: string, input: TenantInput, agreement: AgreementInput) {
-  // Fetched before the tenant exists, so the first charge can bill through
-  // the room split rather than the tenant's flat rentAmount when a bed was
-  // picked at onboarding.
   const room = input.roomId
     ? await prisma.room.findUnique({
         where: { id: input.roomId },
-        include: {
-          tenants: { where: { status: "ACTIVE" }, select: { id: true, joinDate: true, rentCycleAnchor: true } },
-        },
+        include: { tenants: { where: { status: "ACTIVE" }, select: { id: true } } },
       })
     : null;
+
+  // A room that's already occupied has a meter reading in progress for the
+  // people in it. The newcomer's number closes that reading *before* they
+  // exist, so its electricity (from wherever it started up to today) is
+  // billed only to whoever was actually here, and a fresh reading opens
+  // from today with the newcomer's photo. The closed reading stays on
+  // record; nothing about the earlier occupant's history is lost.
+  let readingClosedForNewcomer = false;
+  if (room && room.tenants.length > 0 && input.meterStartReading !== undefined) {
+    const open = await getOpenReadingForRoom(room.id);
+    if (open && new Date(open.startDate) <= new Date(input.joinDate)) {
+      const closed = await closeElectricityReading(actor, open.id, input.meterStartReading, input.joinDate);
+      readingClosedForNewcomer = closed !== null;
+    }
+  }
 
   const tenant = await prisma.tenant.create({
     data: {
@@ -152,40 +176,34 @@ export async function createTenant(actor: string, input: TenantInput, agreement:
   });
   await logActivity(actor, "Tenant onboarded", `${tenant.name} · Room ${tenant.roomNumber || "-"}`);
 
-  // Moving into a room that already has someone in it doesn't start its own
-  // cycle: the first charge is pro-rated up to the existing roommate's next
-  // due-day, and every cycle after that is anchored there too, so the room
-  // settles onto one shared due date instead of two. If they're joining on
-  // that same day-of-month already (most commonly: joining the same day as
-  // the roommate they're moving in with), they're already in sync, no
-  // proration needed, same as if the room had been empty.
-  const existingOccupant = room?.tenants[0];
-  const existingAnchor = existingOccupant ? (existingOccupant.rentCycleAnchor ?? existingOccupant.joinDate) : null;
-  const alreadyAligned = existingAnchor && new Date(existingAnchor).getUTCDate() === tenant.joinDate.getUTCDate();
-
-  if (existingOccupant && existingAnchor && !alreadyAligned) {
-    const syncDate = nextAnchorOccurrence(existingAnchor, tenant.joinDate);
-    await generateSyncedFirstRentCharge(actor, { id: tenant.id, joinDate: tenant.joinDate, rentAmount: tenant.rentAmount }, syncDate);
-    await prisma.tenant.update({ where: { id: tenant.id }, data: { rentCycleAnchor: syncDate } });
-  } else {
-    await generateFirstRentCharge(actor, {
-      id: tenant.id,
-      joinDate: tenant.joinDate,
-      rentAmount: tenant.rentAmount,
-      rentOverride: tenant.rentOverride,
-      room: room,
-    });
-  }
-
   if (input.roomId && input.meterStartReading !== undefined) {
-    await startElectricityReading(actor, {
-      roomId: input.roomId,
-      startReading: input.meterStartReading,
-      startDate: input.joinDate,
-      ratePerUnit: agreement.electricityRate,
-      photoUrl: input.meterStartPhotoUrl,
-    });
+    if (readingClosedForNewcomer) {
+      // Closing the previous reading already opened the next one, seeded
+      // from the newcomer's number on their join date; it just lacks the
+      // proof photo they captured (and should carry their agreed rate).
+      const fresh = await getOpenReadingForRoom(input.roomId);
+      if (fresh) {
+        await prisma.electricityBill.update({
+          where: { id: fresh.id },
+          data: { photoUrl: input.meterStartPhotoUrl, ratePerUnit: agreement.electricityRate, recordedBy: actor },
+        });
+      }
+    } else {
+      await startElectricityReading(actor, {
+        roomId: input.roomId,
+        startReading: input.meterStartReading,
+        startDate: input.joinDate,
+        ratePerUnit: agreement.electricityRate,
+        photoUrl: input.meterStartPhotoUrl,
+      });
+    }
   }
+
+  // Rent for everyone, not just the newcomer: every month from each active
+  // tenant's join month up to the lead window lands on the books right now.
+  // For someone entered today but living here since April, that's April
+  // (pro-rated), May, June, ... each as its own charge to settle one by one.
+  await generateDueRentCharges(actor, { revalidate: false });
 
   if (input.advancePayment && input.advancePayment > 0) {
     await addLedgerEntry(actor, {

@@ -1,40 +1,60 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Bar, BarChart, Cell, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { ImageLightbox, ZoomableImage } from "@/components/image-viewer";
 import {
   ChevronDown,
   ChevronRight,
   MessageCircle,
   Pencil,
   LogOut,
+  MoreHorizontal,
   Trash2,
   FileText,
   CreditCard,
   Car,
   MapPin,
   Phone,
+  Wallet,
   Receipt as ReceiptIcon,
 } from "lucide-react";
-import { Amount, KhataRow, Panel, SectionHeading } from "@/components/khata";
+import { Amount, Panel, SectionHeading } from "@/components/khata";
 import { BackButton } from "@/components/back-button";
+import { TenantPdfActions } from "@/components/tenant-pdf-actions";
 import { inr, fmtDate, dateISO, paymentMethodLabel, todayISO } from "@/lib/format";
-import { CHARGE_TYPE_LABELS, chargeOutstanding, chargePaid, num, summariseCharges } from "@/lib/charges";
+import { CHARGE_TYPE_LABELS, chargeOutstanding, chargePaid, num, periodLabel, periodOf, summariseCharges } from "@/lib/charges";
+import { buildStatement, type Statement, type StatementLine, type StatementMonth } from "@/lib/statement";
 import { type Signature } from "@/lib/messages";
-import { deleteTenant, getTenant, cancelNotice } from "@/app/actions/tenants";
+import { deleteTenant, cancelNotice } from "@/app/actions/tenants";
 import { deleteElectricityBill } from "@/app/actions/electricity";
 import { useManager } from "@/lib/manager-context";
 import { TenantFormDialog } from "@/components/tenant-form-dialog";
 import { CheckoutDialog } from "@/components/checkout-dialog";
 import { ChargeFormDialog } from "@/components/charge-form-dialog";
+import { LedgerFormDialog } from "@/components/ledger-form-dialog";
 import { SendMessageDialog } from "@/components/send-message-dialog";
 import { SendDuesReminderDialog } from "@/components/send-dues-reminder-dialog";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import type { SerialisedTenant } from "@/app/(app)/tenants/[id]/page";
 
-type TenantDetail = NonNullable<Awaited<ReturnType<typeof getTenant>>>;
+type TenantDetail = SerialisedTenant;
+
+/** The one charge a "Pay" button is settling; drives the pinned payment dialog. */
+type PayTarget = { id: string; label: string; type: StatementLine["type"]; outstanding: number };
+
+const STATUS_BADGE: Record<StatementMonth["status"], { label: string; className: string }> = {
+  clear: { label: "Clear", className: "bg-secondary text-primary" },
+  partial: { label: "Partial", className: "bg-marigold/15 text-marigold-foreground" },
+  unpaid: { label: "Unpaid", className: "bg-ledger/10 text-ledger" },
+  none: { label: "Nothing billed", className: "bg-muted text-muted-foreground" },
+};
 
 export function TenantDetailClient({
   tenant,
@@ -52,14 +72,23 @@ export function TenantDetailClient({
   const [editOpen, setEditOpen] = useState(false);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [chargeOpen, setChargeOpen] = useState(false);
+  const [paymentOpen, setPaymentOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [shareMsg, setShareMsg] = useState<{ title: string; subject: string; message: string } | null>(null);
   const [duesReminderOpen, setDuesReminderOpen] = useState(false);
+  const [avatarOpen, setAvatarOpen] = useState(false);
+  const [paying, setPaying] = useState<PayTarget | null>(null);
 
   const currentAgreement = tenant.agreements[0];
   const summary = summariseCharges(tenant.charges);
   const openCharges = tenant.charges.filter((c) => chargeOutstanding(c) > 0.005);
   const roomLabel = tenant.room ? `${tenant.room.floor.name} · Room ${tenant.room.number}` : tenant.roomNumber;
+  const owedNow = summary.total.outstanding;
+  const statement = useMemo(() => buildStatement(tenant), [tenant]);
+
+  function payCharge(c: { id: string; type: StatementLine["type"]; description: string }, outstanding: number) {
+    setPaying({ id: c.id, type: c.type, label: c.description, outstanding });
+  }
 
   function agreementMessage() {
     if (!currentAgreement) return "";
@@ -94,20 +123,42 @@ export function TenantDetailClient({
   }
 
   return (
-    <div className="space-y-4">
-      <BackButton fallbackHref="/tenants" />
+    <div className="space-y-4 pb-24">
+      <div className="flex items-center justify-between">
+        <BackButton fallbackHref="/tenants" />
+      </div>
+
       <Panel>
+        {/* 1. Identity row */}
         <div className="mb-4 flex items-center gap-4">
-          <Avatar className="h-16 w-16">
-            <AvatarImage src={tenant.photoUrl ?? undefined} />
-            <AvatarFallback className="font-display text-lg">{tenant.name.slice(0, 2).toUpperCase()}</AvatarFallback>
-          </Avatar>
+          <button
+            type="button"
+            onClick={() => tenant.photoUrl && setAvatarOpen(true)}
+            className={tenant.photoUrl ? "cursor-zoom-in" : "cursor-default"}
+            aria-label={tenant.photoUrl ? "View photo full size" : undefined}
+          >
+            <Avatar className="h-[52px] w-[52px] rounded-[18px] bg-primary [&_[data-slot=avatar-fallback]]:rounded-[18px] [&_[data-slot=avatar-fallback]]:bg-primary [&_[data-slot=avatar-fallback]]:text-primary-foreground [&_[data-slot=avatar-image]]:rounded-[18px]">
+              <AvatarImage src={tenant.photoUrl ?? undefined} />
+              <AvatarFallback className="font-display text-[17px] font-bold">
+                {tenant.name.slice(0, 2).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+          </button>
+          {tenant.photoUrl && (
+            <ImageLightbox
+              src={tenant.photoUrl}
+              alt={tenant.name}
+              downloadName={`${tenant.name}-photo.jpg`}
+              open={avatarOpen}
+              onOpenChange={setAvatarOpen}
+            />
+          )}
           <div className="min-w-0 flex-1">
-            <p className="truncate font-display text-lg font-semibold tracking-tight">{tenant.name}</p>
-            <p className="text-sm text-muted-foreground">{roomLabel || "No room assigned"}</p>
+            <p className="truncate font-display text-[20px] font-bold tracking-tight">{tenant.name}</p>
             <p className="truncate text-xs text-muted-foreground">
-              {tenant.phone}
-              {tenant.email ? ` · ${tenant.email}` : ""}
+              {roomLabel || "No room assigned"}
+              {tenant.bedNumber ? ` · bed ${tenant.bedNumber}` : ""} · {inr(tenant.rentAmount)}/mo · since{" "}
+              {fmtDate(tenant.joinDate)}
             </p>
           </div>
           {tenant.status === "VACATED" && <Badge variant="destructive">Vacated</Badge>}
@@ -149,15 +200,45 @@ export function TenantDetailClient({
           </div>
         )}
 
-        <div className="mb-4 grid grid-cols-2 gap-3">
-          <div className="rounded-xl border border-border bg-muted/30 p-3">
-            <p className="text-xs text-muted-foreground">Monthly rent</p>
-            <Amount value={tenant.rentAmount} size="lg" />
-          </div>
-          <div className="rounded-xl border border-border bg-muted/30 p-3">
-            <p className="text-xs text-muted-foreground">Outstanding</p>
-            <Amount value={summary.total.outstanding} tone={summary.total.outstanding > 0.005 ? "owed" : "positive"} size="lg" />
-          </div>
+        {/* 2. Owed now */}
+        <div className="mb-4 rounded-[18px] border border-l-[3px] border-border border-l-ledger bg-background p-3.5">
+          <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-muted-foreground">Owed now</p>
+          <p
+            className="khata-amount mt-0.5 text-[30px] font-bold leading-none"
+            style={{ color: owedNow > 0.005 ? "var(--ledger)" : "var(--positive)" }}
+          >
+            {inr(owedNow)}
+          </p>
+          {openCharges.length > 0 ? (
+            <div className="mt-3 border-t border-border/70">
+              {openCharges.map((c) => {
+                const late = dateISO(c.dueDate) < todayISO();
+                const daysLate = late
+                  ? Math.round((new Date(todayISO()).getTime() - new Date(dateISO(c.dueDate)).getTime()) / 86400000)
+                  : 0;
+                const outstanding = chargeOutstanding(c);
+                return (
+                  <div key={c.id} className="flex items-center justify-between gap-3 border-b border-border/50 py-2 last:border-b-0">
+                    <p className="min-w-0 text-[12.5px] leading-snug">
+                      <span className="font-semibold">{CHARGE_TYPE_LABELS[c.type]}</span>{" "}
+                      <span className="text-muted-foreground">
+                        · {c.description}
+                        {late ? ` · ${daysLate} day${daysLate === 1 ? "" : "s"} late` : ""}
+                      </span>
+                    </p>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="khata-amount text-[12.5px] font-bold text-ledger">{inr(outstanding)}</span>
+                      <Button size="xs" variant="outline" onClick={() => payCharge(c, outstanding)}>
+                        Pay
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-muted-foreground">Nothing outstanding.</p>
+          )}
         </div>
 
         <div className="mb-4 space-y-1.5 text-sm">
@@ -187,20 +268,26 @@ export function TenantDetailClient({
               {tenant.emergencyPhone})
             </p>
           )}
-          <p className="pt-1 text-xs text-muted-foreground">
-            Joined {fmtDate(tenant.joinDate)} · Onboarded by {tenant.createdBy}
-          </p>
+          <p className="pt-1 text-xs text-muted-foreground">Onboarded by {tenant.createdBy}</p>
         </div>
 
         {(tenant.aadhaarFrontUrl || tenant.aadhaarBackUrl) && (
           <div className="mb-4 flex gap-2">
             {tenant.aadhaarFrontUrl && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={tenant.aadhaarFrontUrl} alt={`${tenant.idProofType} front`} className="h-16 w-24 rounded-lg border border-border object-cover" />
+              <ZoomableImage
+                src={tenant.aadhaarFrontUrl}
+                alt={`${tenant.idProofType} front`}
+                downloadName={`${tenant.name}-${tenant.idProofType}-front.jpg`}
+                thumbClassName="h-16 w-24 rounded-lg border border-border object-cover"
+              />
             )}
             {tenant.aadhaarBackUrl && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={tenant.aadhaarBackUrl} alt={`${tenant.idProofType} back`} className="h-16 w-24 rounded-lg border border-border object-cover" />
+              <ZoomableImage
+                src={tenant.aadhaarBackUrl}
+                alt={`${tenant.idProofType} back`}
+                downloadName={`${tenant.name}-${tenant.idProofType}-back.jpg`}
+                thumbClassName="h-16 w-24 rounded-lg border border-border object-cover"
+              />
             )}
           </div>
         )}
@@ -209,22 +296,16 @@ export function TenantDetailClient({
           <Button size="sm" variant="secondary" onClick={() => setChargeOpen(true)}>
             <ReceiptIcon className="h-3.5 w-3.5" /> Add charge
           </Button>
-          {openCharges.length > 0 && (
-            <Button size="sm" variant="outline" onClick={() => setDuesReminderOpen(true)}>
-              <MessageCircle className="h-3.5 w-3.5" /> Send dues
+          {currentAgreement && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShareMsg({ title: "Share agreement", subject: "Your PG agreement", message: agreementMessage() })}
+            >
+              <MessageCircle className="h-3 w-3" /> Share agreement
             </Button>
           )}
-          <Button size="sm" variant="outline" onClick={() => setEditOpen(true)}>
-            <Pencil className="h-3.5 w-3.5" /> Edit details
-          </Button>
-          {tenant.status === "ACTIVE" && (
-            <Button size="sm" variant="outline" onClick={() => setCheckoutOpen(true)}>
-              <LogOut className="h-3.5 w-3.5" /> Checkout
-            </Button>
-          )}
-          <Button size="sm" variant="destructive" onClick={() => setConfirmDelete(true)}>
-            <Trash2 className="h-3.5 w-3.5" /> Delete
-          </Button>
+          <TenantPdfActions tenantId={tenant.id} tenantName={tenant.name} />
         </div>
 
         {currentAgreement && (
@@ -244,32 +325,8 @@ export function TenantDetailClient({
               </p>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              Change any of these from Edit details below, no separate revision.
+              Change any of these from Edit details, no separate revision.
             </p>
-            <div className="mt-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setShareMsg({ title: "Share agreement", subject: "Your PG agreement", message: agreementMessage() })}
-              >
-                <MessageCircle className="h-3 w-3" /> Share agreement
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {openCharges.length > 0 && (
-          <div className="mb-4">
-            <SectionHeading>Open charges</SectionHeading>
-            {Object.entries(
-              openCharges.reduce<Record<string, typeof openCharges>>((groups, c) => {
-                const key = dateISO(c.dueDate);
-                (groups[key] ??= []).push(c);
-                return groups;
-              }, {})
-            )
-              .sort(([a], [b]) => a.localeCompare(b))
-              .map(([dueDate, charges]) => <ChargeDueGroup key={dueDate} dueDate={dueDate} charges={charges} />)}
           </div>
         )}
 
@@ -287,47 +344,126 @@ export function TenantDetailClient({
         {tenant.electricityBills.length > 0 && (
           <div className="mb-4">
             <SectionHeading>Electricity readings</SectionHeading>
+            <p className="-mt-1 mb-2 text-[11.5px] text-muted-foreground">
+              Every reading of this room&apos;s meter, including ones closed before they moved in.
+            </p>
             <div className="space-y-2">
-              {tenant.electricityBills.map((b) => (
-                <div key={b.id} className="flex items-center justify-between rounded-lg border border-border p-2 text-sm">
-                  <div className="flex items-center gap-2">
-                    {b.photoUrl && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={b.photoUrl} alt="" className="h-8 w-8 rounded object-cover" />
-                    )}
-                    <span>
-                      {fmtDate(b.startDate)} → {fmtDate(b.endDate)} · {Number(b.units)} units
-                    </span>
+              {tenant.electricityBills.map((b) => {
+                const open = !b.endDate;
+                return (
+                  <div key={b.id} className="flex items-center justify-between gap-3 rounded-lg border border-border p-2 text-sm">
+                    <div className="flex min-w-0 items-center gap-2">
+                      {b.photoUrl && (
+                        <ZoomableImage
+                          src={b.photoUrl}
+                          alt="Meter reading proof"
+                          downloadName={`${tenant.name}-meter-${dateISO(b.startDate)}.jpg`}
+                          thumbClassName="h-8 w-8 shrink-0 rounded object-cover"
+                        />
+                      )}
+                      <div className="min-w-0">
+                        {open ? (
+                          <>
+                            <p className="text-[13px]">
+                              Since {fmtDate(b.startDate)} · <span className="font-mono">{num(b.startReading)}</span>
+                            </p>
+                            <p className="text-[11px] text-marigold-foreground">In progress, not billed yet</p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-[13px]">
+                              {fmtDate(b.startDate)} → {fmtDate(b.endDate)} · {num(b.units)} units
+                            </p>
+                            <p className="font-mono text-[11px] text-muted-foreground">
+                              {num(b.startReading)} → {num(b.endReading)}
+                            </p>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      {!open && <Amount value={b.amount} size="sm" />}
+                      <button onClick={() => handleDeleteReading(b.id)} className="text-xs text-destructive">
+                        Delete
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <Amount value={b.amount} size="sm" />
-                    <button onClick={() => handleDeleteReading(b.id)} className="text-xs text-destructive">
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
-
-        <SectionHeading>Ledger history</SectionHeading>
-        <div className="space-y-2 border-l-2 border-dashed border-border pl-4">
-          {tenant.ledgerEntries.length === 0 && <p className="text-sm text-muted-foreground">No payments recorded yet.</p>}
-          {tenant.ledgerEntries.map((t) => (
-            <div key={t.id}>
-              <p className="text-sm font-medium">
-                {inr(t.amount)} · <span className="font-normal capitalize text-muted-foreground">{t.type.toLowerCase()}</span>
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {fmtDate(t.date)} · {t.mode.replace("_", " ")} · by {t.recordedBy}
-                {t.note ? ` · ${t.note}` : ""}
-                {t.receiptNo ? <span className="serial"> · {t.receiptNo}</span> : null}
-              </p>
-            </div>
-          ))}
-        </div>
       </Panel>
+
+      {/* 2b. Month by month */}
+      <MonthByMonth statement={statement} onPay={(line) => payCharge(line, line.outstanding)} />
+
+      {/* 3. Twelve months of paying */}
+      <TwelveMonthsCard tenant={tenant} />
+
+      {/* 4. Payments */}
+      <Panel>
+        <SectionHeading>Payments</SectionHeading>
+        {tenant.ledgerEntries.length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">No payments recorded yet.</p>
+        ) : (
+          <div>
+            {tenant.ledgerEntries.map((t) => (
+              <div key={t.id} className="khata-row py-2.5">
+                <div className="min-w-0">
+                  <p className="truncate text-[14px] font-semibold capitalize">{t.type.toLowerCase()}</p>
+                  <p className="truncate text-[11.5px] text-muted-foreground">
+                    {t.receiptNo ? <span className="font-mono">{t.receiptNo}</span> : null}
+                    {t.receiptNo ? " · " : ""}
+                    {paymentMethodLabel(t.mode)} · {fmtDate(t.date)}
+                    {t.note ? ` · ${t.note}` : ""}
+                  </p>
+                </div>
+                <span className="khata-amount shrink-0 text-[16px] font-bold">{inr(t.amount)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Panel>
+
+      {/* 5. Sticky bottom action bar */}
+      <div
+        className="fixed inset-x-0 bottom-0 z-40 p-4 pt-8 sm:left-[var(--nav-width,0px)]"
+        style={{ background: "linear-gradient(to top, var(--canvas) 60%, transparent)" }}
+      >
+        <div className="mx-auto flex max-w-lg gap-2">
+          <Button className="h-[48px] flex-1 rounded-[13px] text-[13px] font-bold" onClick={() => setPaymentOpen(true)}>
+            <Wallet className="h-4 w-4" /> Record payment
+          </Button>
+          <Button
+            variant="outline"
+            className="h-[48px] flex-1 rounded-[13px] border-input bg-background text-[13px] font-bold"
+            onClick={() => setDuesReminderOpen(true)}
+          >
+            <MessageCircle className="h-4 w-4" /> Remind
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={<Button variant="outline" className="h-[48px] w-[46px] shrink-0 rounded-[13px] border-input bg-background p-0" />}
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" side="top">
+              <DropdownMenuItem onClick={() => setEditOpen(true)}>
+                <Pencil className="h-3.5 w-3.5" /> Edit details
+              </DropdownMenuItem>
+              {tenant.status === "ACTIVE" && (
+                <DropdownMenuItem onClick={() => setCheckoutOpen(true)}>
+                  <LogOut className="h-3.5 w-3.5" /> Checkout
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem variant="destructive" onClick={() => setConfirmDelete(true)}>
+                <Trash2 className="h-3.5 w-3.5" /> Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
 
       <TenantFormDialog
         open={editOpen}
@@ -348,7 +484,7 @@ export function TenantDetailClient({
             : null
         }
       />
-      <CheckoutDialog open={checkoutOpen} onOpenChange={setCheckoutOpen} tenant={tenant} />
+      <CheckoutDialog open={checkoutOpen} onOpenChange={setCheckoutOpen} tenant={tenant as never} />
       <ChargeFormDialog
         open={chargeOpen}
         onOpenChange={setChargeOpen}
@@ -356,6 +492,34 @@ export function TenantDetailClient({
         tenantName={tenant.name}
         roomId={tenant.roomId}
       />
+      <LedgerFormDialog
+        open={paymentOpen}
+        onOpenChange={(o) => {
+          setPaymentOpen(o);
+          if (!o) router.refresh();
+        }}
+        tenants={[{ id: tenant.id, name: tenant.name, roomNumber: tenant.roomNumber, rentAmount: tenant.rentAmount }]}
+        fixedTenantId={tenant.id}
+        outstandingAmount={owedNow > 0.005 ? owedNow : undefined}
+      />
+      {paying && (
+        <LedgerFormDialog
+          key={paying.id}
+          open
+          onOpenChange={(o) => {
+            if (!o) {
+              setPaying(null);
+              router.refresh();
+            }
+          }}
+          tenants={[{ id: tenant.id, name: tenant.name, roomNumber: tenant.roomNumber, rentAmount: tenant.rentAmount }]}
+          fixedTenantId={tenant.id}
+          outstandingAmount={paying.outstanding}
+          chargeId={paying.id}
+          chargeLabel={paying.label}
+          chargeType={paying.type}
+        />
+      )}
       {shareMsg && (
         <SendMessageDialog
           open={!!shareMsg}
@@ -414,59 +578,230 @@ export function TenantDetailClient({
 type ChargeRow = TenantDetail["charges"][number];
 
 /**
- * One row per due date, collapsed to the cumulative total (it's usually all
- * of a cycle's charges landing the same day, rent plus whatever else), with
- * the individual charges available a click away instead of cluttering the
- * default view.
+ * The tenant's statement, one collapsible row per month they've been here:
+ * what was provided, what it cost, and what's been paid *for* that month,
+ * whenever the money actually came in. Newest first; months with nothing
+ * on them (before they joined, after they left) are skipped.
  */
-function ChargeDueGroup({ dueDate, charges }: { dueDate: string; charges: ChargeRow[] }) {
-  const [open, setOpen] = useState(false);
-  const late = dueDate < todayISO();
-  const totalOutstanding = charges.reduce((s, c) => s + chargeOutstanding(c), 0);
-  const totalPaid = charges.reduce((s, c) => s + chargePaid(c), 0);
+function MonthByMonth({ statement, onPay }: { statement: Statement; onPay: (line: StatementLine) => void }) {
+  const [openPeriod, setOpenPeriod] = useState<string | null>(null);
+  const months = [...statement.months].reverse().filter((m) => !m.empty);
 
   return (
-    <div className="border-b border-border/70 last:border-b-0">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-3 py-2.5 text-left"
-      >
-        <span className="flex items-center gap-1.5 text-sm">
-          {open ? (
-            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          )}
-          <span className={late ? "font-semibold text-ledger" : ""}>
-            {late ? "Overdue since" : "Due"} {fmtDate(dueDate)}
-          </span>
-          <span className="text-xs text-muted-foreground">
-            ({charges.length} charge{charges.length === 1 ? "" : "s"})
-          </span>
-        </span>
-        <Amount value={totalOutstanding} tone="owed" size="sm" />
-      </button>
+    <Panel>
+      <SectionHeading>Month by month</SectionHeading>
+      <p className="-mt-1 mb-2 text-[11.5px] leading-[1.45] text-muted-foreground">
+        What each month cost and what&apos;s been paid towards it. A payment counts for the month it settles, not the
+        day it was made.
+      </p>
+      {months.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Nothing billed yet.</p>
+      ) : (
+        <div>
+          {months.map((m) => {
+            const expanded = openPeriod === m.period;
+            const badge = STATUS_BADGE[m.status];
+            return (
+              <div key={m.period} className="border-b border-border/70 last:border-b-0">
+                <button
+                  type="button"
+                  onClick={() => setOpenPeriod(expanded ? null : m.period)}
+                  className="flex w-full items-start justify-between gap-3 py-2.5 text-left"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[14px] font-semibold">
+                      {expanded ? (
+                        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      )}
+                      {periodLabel(m.period)}
+                      <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold", badge.className)}>{badge.label}</span>
+                    </p>
+                    {m.services.length > 0 && (
+                      <p className="mt-1 flex flex-wrap gap-1 pl-5">
+                        {m.services.map((s) => (
+                          <span key={s} className="rounded-md bg-muted px-1.5 py-0.5 text-[10.5px] text-muted-foreground">
+                            {s}
+                          </span>
+                        ))}
+                      </p>
+                    )}
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <Amount value={m.outstanding} tone={m.outstanding > 0.005 ? "owed" : "positive"} size="sm" />
+                    <p className="text-[10.5px] text-muted-foreground">
+                      billed {inr(m.billed)} · paid {inr(m.paid)}
+                    </p>
+                  </div>
+                </button>
 
-      {open && (
-        <div className="pb-2.5 pl-5">
-          {charges.map((c) => (
-            <KhataRow key={c.id} className="py-1.5" amount={<Amount value={num(c.amount)} tone="owed" size="sm" />}>
-              <p className="truncate text-sm">
-                <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                  {CHARGE_TYPE_LABELS[c.type]}
-                </span>{" "}
-                {c.description}
-              </p>
-            </KhataRow>
-          ))}
-          {totalPaid > 0 && (
-            <KhataRow className="py-1.5" amount={<span className="khata-amount text-sm text-positive">− {inr(totalPaid)}</span>}>
-              <p className="text-xs font-semibold text-positive">Partially paid</p>
-            </KhataRow>
-          )}
+                {expanded && (
+                  <div className="mb-2.5 rounded-xl border border-border/70 bg-muted/30 p-2.5 text-[12.5px]">
+                    {m.lines.length === 0 ? (
+                      <p className="text-muted-foreground">No charges this month.</p>
+                    ) : (
+                      m.lines.map((line) => (
+                        <div key={line.id} className="flex items-start justify-between gap-3 border-b border-border/50 py-1.5 last:border-b-0">
+                          <div className="min-w-0">
+                            <p className={cn("leading-snug", line.waived && "text-muted-foreground line-through")}>
+                              <span className="font-semibold">{CHARGE_TYPE_LABELS[line.type]}</span>{" "}
+                              <span className="text-muted-foreground">· {line.description}</span>
+                            </p>
+                            {line.reading && (
+                              <p className="font-mono text-[11px] text-muted-foreground">
+                                {line.reading.from} → {line.reading.to ?? "…"}
+                                {line.reading.units !== null ? ` · ${line.reading.units} units` : ""}
+                              </p>
+                            )}
+                            <p className="text-[11px] text-muted-foreground">
+                              Due {fmtDate(line.dueDate)}
+                              {line.paid > 0.005 ? ` · paid ${inr(line.paid)}` : ""}
+                              {line.waived ? " · waived" : ""}
+                            </p>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <div className="text-right">
+                              <p className="khata-amount font-bold">{inr(line.billed)}</p>
+                              {line.outstanding > 0.005 && (
+                                <p className="khata-amount text-[11px] text-ledger">{inr(line.outstanding)} due</p>
+                              )}
+                            </div>
+                            {line.outstanding > 0.005 && (
+                              <Button size="xs" variant="outline" onClick={() => onPay(line)}>
+                                Pay
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+
+                    {m.payments.length > 0 && (
+                      <div className="mt-2 border-t border-border/70 pt-2">
+                        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.1em] text-muted-foreground">Paid towards this month</p>
+                        {m.payments.map((p) => (
+                          <div key={`${p.id}-${m.period}`} className="flex items-center justify-between gap-3 py-1">
+                            <p className="min-w-0 truncate text-muted-foreground">
+                              {fmtDate(p.date)}
+                              {p.receiptNo ? (
+                                <>
+                                  {" · "}
+                                  <span className="font-mono">{p.receiptNo}</span>
+                                </>
+                              ) : null}
+                              {" · "}
+                              {paymentMethodLabel(p.mode)}
+                              {p.appliedHere < p.amount - 0.005 ? ` · part of ${inr(p.amount)}` : ""}
+                            </p>
+                            <span className="khata-amount shrink-0 font-bold text-positive">{inr(p.appliedHere)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          <div className="flex items-center justify-between pt-2.5 text-[12px]">
+            <span className="font-semibold">All months</span>
+            <span className="text-muted-foreground">
+              billed {inr(statement.totals.billed)} · paid {inr(statement.totals.paid)} ·{" "}
+              <span className={statement.totals.outstanding > 0.005 ? "font-semibold text-ledger" : "font-semibold text-positive"}>
+                {inr(statement.totals.outstanding)} due
+              </span>
+            </span>
+          </div>
         </div>
       )}
-    </div>
+    </Panel>
   );
 }
 
+/**
+ * One thin bar per of the last 12 calendar months: full-height track in
+ * `--secondary`, the paid portion drawn as an inner bar colored by how that
+ * month's rent went - clean, short, or (marked with a red !) not paid at all.
+ * A month before the tenant joined (no rent charge raised) is left as a bare
+ * track: there was nothing to pay.
+ */
+function TwelveMonthsCard({ tenant }: { tenant: TenantDetail }) {
+  const rentByPeriod = new Map<string, ChargeRow[]>();
+  for (const c of tenant.charges) {
+    if (c.type !== "RENT") continue;
+    (rentByPeriod.get(c.period) ?? rentByPeriod.set(c.period, []).get(c.period)!).push(c);
+  }
+
+  const today = todayISO();
+  const months: {
+    period: string;
+    short: string;
+    billed: number;
+    paid: number;
+    status: "none" | "paid" | "partial" | "unbilled";
+    late: boolean;
+  }[] = [];
+
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() - i);
+    const period = periodOf(d);
+    const charges = rentByPeriod.get(period) ?? [];
+    const billed = round(charges.reduce((s, c) => s + num(c.amount), 0));
+    const paid = round(charges.reduce((s, c) => s + chargePaid(c), 0));
+    const late = charges.some((c) => dateISO(c.dueDate) < today && chargeOutstanding(c) > 0.005);
+    const status: (typeof months)[number]["status"] =
+      charges.length === 0 ? "unbilled" : paid <= 0.005 ? "none" : paid >= billed - 0.005 ? "paid" : "partial";
+    months.push({ period, short: d.toLocaleDateString("en-IN", { month: "short" }).slice(0, 1), billed, paid, status, late });
+  }
+
+  // recharts' "auto" domain doesn't reliably size to the data with two
+  // overlapping bars sharing an axis, so the domain is computed by hand.
+  const billedMax = Math.max(1, ...months.map((m) => m.billed)) * 1.1;
+
+  return (
+    <Panel>
+      <SectionHeading>Twelve months of paying</SectionHeading>
+      <p className="-mt-1 mb-3 text-[11.5px] leading-[1.45] text-muted-foreground">
+        Each bar is a month&apos;s rent: full green means paid in full, amber means partial, and a red mark means nothing
+        came in.
+      </p>
+      <div className="relative h-[140px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={months} barGap={-14} margin={{ top: 14, right: 0, bottom: 0, left: 0 }}>
+            <XAxis dataKey="short" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} />
+            <YAxis hide domain={[0, billedMax]} />
+            <Bar dataKey="billed" fill="var(--secondary)" radius={4} barSize={14} isAnimationActive={false} />
+            <Bar dataKey="paid" radius={4} barSize={14} isAnimationActive={false}>
+              {months.map((m) => (
+                <Cell
+                  key={m.period}
+                  fill={
+                    m.status === "paid"
+                      ? "var(--chart-rent)"
+                      : m.status === "partial"
+                        ? "var(--marigold)"
+                        : "transparent"
+                  }
+                />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+        <div className="pointer-events-none absolute inset-x-0 top-0 grid grid-cols-12">
+          {months.map((m) => (
+            <span key={m.period} className="text-center text-[11px] font-bold text-ledger">
+              {m.status === "none" && m.late ? "!" : ""}
+            </span>
+          ))}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function round(n: number) {
+  return Math.round(n * 100) / 100;
+}

@@ -1,7 +1,90 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
-import { num, round2, summariseCharges } from "@/lib/charges";
+import { num, periodOf, round2, summariseCharges } from "@/lib/charges";
+
+export type PeriodCollections = Map<string, { collected: number; rent: number }>;
+
+/**
+ * Money collected, grouped by the billing period it actually paid off - not
+ * the date it was paid on. A payment made in August against June and July's
+ * rent counts toward June and July here, via each Allocation's Charge.period,
+ * the same trail the dues engine itself follows in allocatePaymentToCharges.
+ *
+ * Only the allocated portion of a payment has a period to attribute to. Any
+ * leftover sitting as unapplied credit (paid in advance of any open charge)
+ * is counted toward the month it was actually received, since it isn't "for"
+ * a billing period yet.
+ */
+export async function getCollectionsByPeriod(): Promise<PeriodCollections> {
+  const [allocations, payments] = await Promise.all([
+    prisma.allocation.findMany({
+      where: { ledgerEntry: { type: { in: ["RENT", "OTHER"] } } },
+      select: { amount: true, ledgerEntryId: true, charge: { select: { period: true, type: true } } },
+    }),
+    prisma.ledgerEntry.findMany({
+      where: { type: { in: ["RENT", "OTHER"] } },
+      select: { id: true, amount: true, date: true },
+    }),
+  ]);
+
+  const byPeriod: PeriodCollections = new Map();
+  const allocatedPerEntry = new Map<string, number>();
+
+  function bump(period: string, amount: number, isRent: boolean) {
+    const row = byPeriod.get(period) ?? { collected: 0, rent: 0 };
+    row.collected = round2(row.collected + amount);
+    if (isRent) row.rent = round2(row.rent + amount);
+    byPeriod.set(period, row);
+  }
+
+  for (const a of allocations) {
+    const amount = num(a.amount);
+    allocatedPerEntry.set(a.ledgerEntryId, round2((allocatedPerEntry.get(a.ledgerEntryId) ?? 0) + amount));
+    bump(a.charge.period, amount, a.charge.type === "RENT");
+  }
+
+  for (const p of payments) {
+    const leftover = round2(num(p.amount) - (allocatedPerEntry.get(p.id) ?? 0));
+    if (leftover > 0.005) bump(periodOf(p.date), leftover, false);
+  }
+
+  return byPeriod;
+}
+
+/** Sum of `Charge.amount` (what was actually billed, waived or not) by period, for the collection-rate chart. */
+export async function getBilledByPeriod(): Promise<Map<string, number>> {
+  const charges = await prisma.charge.findMany({ select: { period: true, amount: true } });
+  const byPeriod = new Map<string, number>();
+  for (const c of charges) byPeriod.set(c.period, round2((byPeriod.get(c.period) ?? 0) + num(c.amount)));
+  return byPeriod;
+}
+
+/**
+ * Beds occupied at the end of each of the last `months` calendar months,
+ * derived from each tenant's joinDate/vacatedDate rather than a stored
+ * snapshot - a tenant counts for a month if they'd joined by its last day and
+ * hadn't vacated before its first.
+ */
+export async function getOccupancyHistory(months: number) {
+  const tenants = await prisma.tenant.findMany({ select: { joinDate: true, vacatedDate: true } });
+
+  const points: { period: string; occupied: number }[] = [];
+  for (let i = months - 1; i >= 0; i--) {
+    const monthEnd = new Date();
+    monthEnd.setDate(1);
+    monthEnd.setMonth(monthEnd.getMonth() - i + 1);
+    monthEnd.setDate(0);
+    const monthStart = new Date(monthEnd.getFullYear(), monthEnd.getMonth(), 1);
+
+    const occupied = tenants.filter(
+      (t) => t.joinDate <= monthEnd && (!t.vacatedDate || t.vacatedDate >= monthStart)
+    ).length;
+
+    points.push({ period: periodOf(monthEnd), occupied });
+  }
+  return points;
+}
 
 /**
  * Every deposit currently held, one row per tenant, for Ledger > Security.
@@ -27,7 +110,9 @@ export async function listSecurityDeposits() {
   });
 
   return {
-    tenants,
+    // depositAmount is a Prisma Decimal, not a plain object - it can't cross
+    // the Server Component -> Client Component boundary as-is.
+    tenants: tenants.map((t) => ({ ...t, depositAmount: num(t.depositAmount) })),
     total: round2(tenants.reduce((s, t) => s + num(t.depositAmount), 0)),
   };
 }

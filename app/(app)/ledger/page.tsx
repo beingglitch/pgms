@@ -4,6 +4,7 @@ import { listExpenses } from "@/app/actions/expenses";
 import { listSecurityDeposits } from "@/app/actions/reports";
 import { getPgInfo } from "@/app/actions/settings";
 import { prisma } from "@/lib/prisma";
+import { num } from "@/lib/charges";
 import { LedgerClient } from "@/components/ledger-client";
 
 export const dynamic = "force-dynamic";
@@ -18,20 +19,24 @@ export default async function LedgerPage({
     listExpenses(),
     listSecurityDeposits(),
     listOutstandingByTenant(),
-    prisma.tenant.findMany({
-      where: { status: "ACTIVE" },
-      orderBy: { name: "asc" },
-      select: {
-        id: true,
-        name: true,
-        photoUrl: true,
-        roomNumber: true,
-        rentAmount: true,
-        phone: true,
-        email: true,
-        room: { select: { id: true } },
-      },
-    }),
+    prisma.tenant
+      .findMany({
+        where: { status: "ACTIVE" },
+        orderBy: { name: "asc" },
+        select: {
+          id: true,
+          name: true,
+          photoUrl: true,
+          roomNumber: true,
+          rentAmount: true,
+          phone: true,
+          email: true,
+          room: { select: { id: true } },
+        },
+      })
+      // rentAmount is a Prisma Decimal - not a plain object, so it can't
+      // cross the Server Component -> Client Component boundary as-is.
+      .then((rows) => rows.map((t) => ({ ...t, rentAmount: num(t.rentAmount) }))),
     getPgInfo(),
     searchParams,
   ]);
@@ -47,11 +52,11 @@ export default async function LedgerPage({
       initialTab={
         params.month
           ? "payments"
-          : params.tab === "dues"
-            ? "dues"
+          : params.tab === "payments"
+            ? "payments"
             : params.tab === "security"
               ? "security"
-              : "payments"
+              : "dues"
       }
       initialDuesFilter={params.filter === "upcoming" ? "upcoming" : params.filter === "current" ? "current" : "all"}
       initialMonth={params.month}
