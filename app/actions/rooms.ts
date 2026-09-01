@@ -3,7 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "./activity";
-import { rentShare } from "@/lib/charges";
+import { FULL_ROOM_BED, rentShare } from "@/lib/charges";
 import { resetElectricityIfRoomEmpty } from "./electricity";
 
 function revalidateRoomViews() {
@@ -51,27 +51,34 @@ export async function getBuilding() {
   const shaped = floors.map((floor) => ({
     ...floor,
     rooms: floor.rooms.map((room) => {
+      // A tenant who has taken the whole room fills every bed slot, so the
+      // room reads as fully occupied by them rather than offering the rest
+      // of its beds to anyone else.
+      const wholeRoomTenant = room.tenants.find((t) => t.bedNumber === FULL_ROOM_BED);
+
       const beds = Array.from({ length: room.capacity }, (_, i) => {
         const bedLabel = String(i + 1);
         return {
           bedNumber: bedLabel,
-          tenant: room.tenants.find((t) => t.bedNumber === bedLabel) ?? null,
+          tenant: wholeRoomTenant ?? room.tenants.find((t) => t.bedNumber === bedLabel) ?? null,
         };
       });
 
       // Anyone whose bed label doesn't line up with a numbered bed still needs
       // somewhere to show, so drop them into the first free slot.
-      for (const tenant of room.tenants) {
-        if (beds.some((b) => b.tenant?.id === tenant.id)) continue;
-        const free = beds.find((b) => !b.tenant);
-        if (free) free.tenant = tenant;
+      if (!wholeRoomTenant) {
+        for (const tenant of room.tenants) {
+          if (beds.some((b) => b.tenant?.id === tenant.id)) continue;
+          const free = beds.find((b) => !b.tenant);
+          if (free) free.tenant = tenant;
+        }
       }
 
       return {
         ...room,
         perBed: rentShare(room),
         beds,
-        occupied: room.tenants.length,
+        occupied: wholeRoomTenant ? room.capacity : room.tenants.length,
         lastClosedReading: room.meterReadings.find((r) => r.endDate !== null) ?? null,
         openReading: room.meterReadings.find((r) => r.endDate === null) ?? null,
       };
@@ -106,16 +113,18 @@ export async function listRoomOptions() {
   });
 
   return rooms.map((room) => {
-    const occupied = room.tenants.length;
+    const wholeRoomTaken = room.tenants.some((t) => t.bedNumber === FULL_ROOM_BED);
     return {
       id: room.id,
       label: `${room.floor.name} · Room ${room.number}`,
       number: room.number,
       capacity: room.capacity,
       rentAmount: Number(room.rentAmount),
-      occupied,
+      occupied: wholeRoomTaken ? room.capacity : room.tenants.length,
       perBed: rentShare(room),
-      takenBeds: room.tenants.map((t) => t.bedNumber).filter(Boolean) as string[],
+      takenBeds: wholeRoomTaken
+        ? Array.from({ length: room.capacity }, (_, i) => String(i + 1))
+        : (room.tenants.map((t) => t.bedNumber).filter(Boolean) as string[]),
       hasOpenReading: room.meterReadings.length > 0,
     };
   });
@@ -188,7 +197,15 @@ export async function deleteRoom(actor: string, id: string) {
   revalidateRoomViews();
 }
 
-/** Move a tenant into a bed, or out of a room entirely when roomId is null. */
+/**
+ * Move a tenant into a bed (or the whole room, via `FULL_ROOM_BED`), or out
+ * of a room entirely when roomId is null.
+ *
+ * Taking the whole room pins the tenant's rent to the room's full amount
+ * (rentOverride), since the per-bed split no longer applies with nobody to
+ * share it with; moving off "whole room" onto an ordinary bed clears that
+ * pin back to the normal per-bed share.
+ */
 export async function assignTenantToRoom(
   actor: string,
   tenantId: string,
@@ -196,10 +213,29 @@ export async function assignTenantToRoom(
   bedNumber?: string | null
 ) {
   const room = roomId
-    ? await prisma.room.findUnique({ where: { id: roomId }, include: { floor: { select: { name: true } } } })
+    ? await prisma.room.findUnique({
+        where: { id: roomId },
+        include: {
+          floor: { select: { name: true } },
+          tenants: { where: { status: "ACTIVE", id: { not: tenantId } }, select: { id: true, bedNumber: true } },
+        },
+      })
     : null;
 
-  const previous = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { roomId: true } });
+  if (room) {
+    const wholeRoomTaken = room.tenants.some((t) => t.bedNumber === FULL_ROOM_BED);
+    if (bedNumber === FULL_ROOM_BED && room.tenants.length > 0) {
+      throw new Error("Someone's already in this room, so it can't be given out whole.");
+    }
+    if (bedNumber !== FULL_ROOM_BED && wholeRoomTaken) {
+      throw new Error("This room is taken whole by another tenant, move them out first.");
+    }
+  }
+
+  const previous = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { roomId: true, bedNumber: true, rentOverride: true },
+  });
 
   const tenant = await prisma.tenant.update({
     where: { id: tenantId },
@@ -207,13 +243,23 @@ export async function assignTenantToRoom(
       roomId,
       bedNumber: bedNumber ?? null,
       roomNumber: room?.number ?? null,
+      rentOverride:
+        bedNumber === FULL_ROOM_BED
+          ? room!.rentAmount
+          : previous?.bedNumber === FULL_ROOM_BED
+            ? null
+            : undefined,
     },
   });
 
   await logActivity(
     actor,
     roomId ? "Tenant assigned to bed" : "Tenant removed from room",
-    room ? `${tenant.name} → ${room.floor.name} · Room ${room.number}${bedNumber ? ` · bed ${bedNumber}` : ""}` : tenant.name
+    room
+      ? `${tenant.name} → ${room.floor.name} · Room ${room.number}${
+          bedNumber === FULL_ROOM_BED ? " · whole room" : bedNumber ? ` · bed ${bedNumber}` : ""
+        }`
+      : tenant.name
   );
 
   if (previous?.roomId && previous.roomId !== roomId) await resetElectricityIfRoomEmpty(actor, previous.roomId);

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ZoomableAvatar } from "@/components/image-viewer";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CheckCircle2, MessageCircle, Search, Send } from "lucide-react";
@@ -13,7 +13,7 @@ import { getReminderHistory } from "@/app/actions/reminders";
 import { listOutstandingByTenant } from "@/app/actions/charges";
 import { type Signature } from "@/lib/messages";
 import { chargeOutstanding, CHARGE_TYPE_LABELS } from "@/lib/charges";
-import { inr, fmtDate, initials } from "@/lib/format";
+import { inr, fmtDate } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -247,10 +247,7 @@ function ChaseCard({
             className="mt-0.5 h-[22px] w-[22px] shrink-0 rounded-[7px] border-input data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground"
           />
           <Link href={`/tenants/${tenant.id}`} className="flex min-w-0 items-center gap-2.5">
-            <Avatar className="h-9 w-9">
-              <AvatarImage src={tenant.photoUrl ?? undefined} />
-              <AvatarFallback className="text-[10px]">{initials(tenant.name)}</AvatarFallback>
-            </Avatar>
+            <ZoomableAvatar src={tenant.photoUrl} name={tenant.name} className="h-9 w-9" fallbackClassName="text-[10px]" />
             <div className="min-w-0">
               <p className="truncate font-display text-base font-semibold tracking-tight">{tenant.name}</p>
               <p className="truncate text-xs text-muted-foreground">

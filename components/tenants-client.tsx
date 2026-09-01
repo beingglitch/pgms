@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Search, Plus, ChevronRight, Users } from "lucide-react";
 import { TenantFormDialog } from "@/components/tenant-form-dialog";
+import { ZoomableImage } from "@/components/image-viewer";
 import { EmptyState, PageTitle } from "@/components/khata";
 import { inr, initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -160,8 +161,12 @@ export function TenantsClient({
                 )}
               >
                 {t.photoUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={t.photoUrl} alt="" className="h-full w-full object-cover" />
+                  <ZoomableImage
+                    src={t.photoUrl}
+                    alt={t.name}
+                    downloadName={`${t.name}-photo.jpg`}
+                    thumbClassName="h-[38px] w-[38px] rounded-[13px] object-cover"
+                  />
                 ) : (
                   initials(t.name)
                 )}

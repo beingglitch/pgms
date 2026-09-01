@@ -6,7 +6,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ZoomableAvatar } from "@/components/image-viewer";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BookOpen, IndianRupee, Plus, Receipt, Search, Sparkles, X } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -24,7 +24,7 @@ import { listSecurityDeposits } from "@/app/actions/reports";
 import { bucketDuesAging, chargeOutstanding, CHARGE_TYPE_LABELS, num, periodLabel } from "@/lib/charges";
 import { type Signature } from "@/lib/messages";
 import { useManager } from "@/lib/manager-context";
-import { inr, fmtDate, monthKey, initials, todayISO, daysFromNowISO, dateISO, paymentMethodLabel } from "@/lib/format";
+import { inr, fmtDate, monthKey, todayISO, daysFromNowISO, dateISO, paymentMethodLabel } from "@/lib/format";
 import { toast } from "sonner";
 
 type Entry = Awaited<ReturnType<typeof listLedger>>[number];
@@ -252,10 +252,7 @@ export function LedgerClient({
                       href={`/tenants/${t.id}`}
                       className="flex items-center gap-2.5 py-2.5 first:pt-3"
                     >
-                      <Avatar className="h-8 w-8">
-                        <AvatarImage src={t.photoUrl ?? undefined} />
-                        <AvatarFallback className="text-[10px]">{initials(t.name)}</AvatarFallback>
-                      </Avatar>
+                      <ZoomableAvatar src={t.photoUrl} name={t.name} className="h-8 w-8" fallbackClassName="text-[10px]" />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-semibold">{t.name}</p>
                         <p className="truncate text-xs text-marigold-foreground/70">
@@ -329,10 +326,7 @@ export function LedgerClient({
                   }}
                   className="flex w-full items-center gap-2.5 rounded-xl px-2 py-2 text-left transition-colors hover:bg-muted"
                 >
-                  <Avatar className="h-8 w-8">
-                    <AvatarImage src={t.photoUrl ?? undefined} />
-                    <AvatarFallback className="text-[10px]">{initials(t.name)}</AvatarFallback>
-                  </Avatar>
+                  <ZoomableAvatar src={t.photoUrl} name={t.name} className="h-8 w-8" fallbackClassName="text-[10px]" />
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold">{t.name}</p>
                     <p className="truncate text-xs text-muted-foreground">{t.roomNumber ? `Room ${t.roomNumber}` : "No room"}</p>
@@ -597,10 +591,12 @@ function PaymentsTab({
                 }
               >
                 <div className="flex items-center gap-2.5">
-                  <Avatar className="h-8 w-8">
-                    <AvatarImage src={r.data.tenant?.photoUrl ?? undefined} />
-                    <AvatarFallback className="text-[10px]">{initials(r.data.tenant?.name)}</AvatarFallback>
-                  </Avatar>
+                  <ZoomableAvatar
+                    src={r.data.tenant?.photoUrl}
+                    name={r.data.tenant?.name ?? "?"}
+                    className="h-8 w-8"
+                    fallbackClassName="text-[10px]"
+                  />
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold">
                       {r.data.tenant?.name || "Unknown tenant"}
@@ -707,10 +703,7 @@ function DueCard({
     <Panel className="border-l-[3px] border-l-ledger p-3 pl-[11px]">
       <div className="mb-3 flex items-start justify-between gap-3">
         <Link href={`/tenants/${tenant.id}`} className="flex min-w-0 items-center gap-2.5">
-          <Avatar className="h-9 w-9">
-            <AvatarImage src={tenant.photoUrl ?? undefined} />
-            <AvatarFallback className="text-[10px]">{initials(tenant.name)}</AvatarFallback>
-          </Avatar>
+          <ZoomableAvatar src={tenant.photoUrl} name={tenant.name} className="h-9 w-9" fallbackClassName="text-[10px]" />
           <div className="min-w-0">
             <p className="truncate font-display text-[14px] font-bold tracking-tight">{tenant.name}</p>
             <p className="truncate text-[11.5px] text-muted-foreground">

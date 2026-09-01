@@ -251,6 +251,22 @@ export async function updateTenant(actor: string, id: string, input: Partial<Ten
   return tenant;
 }
 
+/** Replace or remove (url = null) one of a tenant's photos from the image viewer. */
+export async function setTenantImage(
+  actor: string,
+  id: string,
+  field: "photoUrl" | "aadhaarFrontUrl" | "aadhaarBackUrl",
+  url: string | null
+) {
+  const tenant = await prisma.tenant.update({ where: { id }, data: { [field]: url } });
+  const label = field === "photoUrl" ? "photo" : field === "aadhaarFrontUrl" ? "ID front" : "ID back";
+  await logActivity(actor, url ? "Tenant photo changed" : "Tenant photo removed", `${tenant.name} · ${label}`);
+  revalidatePath("/tenants");
+  revalidatePath(`/tenants/${id}`);
+  revalidatePath("/rooms");
+  revalidatePath("/");
+}
+
 export async function deleteTenant(actor: string, id: string) {
   const tenant = await prisma.tenant.delete({ where: { id } });
   await logActivity(actor, "Tenant deleted", tenant.name);

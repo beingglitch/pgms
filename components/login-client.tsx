@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { createPassword, signIn, resetPasswordWithCode } from "@/app/actions/auth";
 import { Lock, ShieldCheck, KeyRound, Eye, EyeOff } from "lucide-react";
+import { ZoomableImage } from "@/components/image-viewer";
 
 export function LoginClient({
   pgName,
@@ -56,8 +57,14 @@ export function LoginClient({
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center text-center">
           {logoUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={logoUrl} alt="" className="mb-4 h-14 w-14 rounded-2xl object-cover shadow-card" />
+            <div className="mb-4">
+              <ZoomableImage
+                src={logoUrl}
+                alt={`${pgName} logo`}
+                downloadName="logo.png"
+                thumbClassName="h-14 w-14 rounded-2xl object-cover shadow-card"
+              />
+            </div>
           ) : (
             <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary font-display text-xl font-semibold text-primary-foreground shadow-card">
               {shortName}

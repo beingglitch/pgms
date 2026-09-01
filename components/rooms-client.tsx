@@ -6,7 +6,6 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { BedDouble, DoorOpen, Layers, Pencil, Plus, RotateCcw, Trash2, Zap } from "lucide-react";
 import { EmptyState, Panel, SectionHeading } from "@/components/khata";
@@ -21,10 +20,11 @@ import {
   updateFloor,
   updateRoom,
 } from "@/app/actions/rooms";
-import { resetElectricityReading } from "@/app/actions/electricity";
+import { resetElectricityReading, setMeterPhoto } from "@/app/actions/electricity";
 import { useManager } from "@/lib/manager-context";
 import { initials, fmtDate, dateISO, inr } from "@/lib/format";
-import { ZoomableImage } from "@/components/image-viewer";
+import { FULL_ROOM_BED } from "@/lib/charges";
+import { ZoomableAvatar, ZoomableImage } from "@/components/image-viewer";
 import { toast } from "sonner";
 
 type Building = Awaited<ReturnType<typeof getBuilding>>;
@@ -130,10 +130,7 @@ export function RoomsClient({
                 href={`/tenants/${t.id}`}
                 className="flex items-center gap-2 rounded-full border border-border bg-background px-2.5 py-1 text-xs font-semibold"
               >
-                <Avatar className="h-5 w-5">
-                  <AvatarImage src={t.photoUrl ?? undefined} />
-                  <AvatarFallback className="text-[8px]">{initials(t.name)}</AvatarFallback>
-                </Avatar>
+                <ZoomableAvatar src={t.photoUrl} name={t.name} className="h-5 w-5" fallbackClassName="text-[8px]" />
                 {t.name}
               </Link>
             ))}
@@ -260,14 +257,30 @@ function RoomCard({
   onAssign: (bedNumber: string) => void;
   onReset: () => void;
 }) {
+  const router = useRouter();
+  const { manager } = useManager();
   const [showHistory, setShowHistory] = useState(false);
 
   const closedReadings = room.meterReadings.filter((r) => r.endDate);
   const vacantCount = room.capacity - room.occupied;
-  const noteLine =
-    vacantCount === 0
+  const wholeRoomTenant =
+    room.capacity > 1 && room.beds[0]?.tenant && room.beds.every((b) => b.tenant?.id === room.beds[0].tenant?.id)
+      ? room.beds[0].tenant
+      : null;
+  const noteLine = wholeRoomTenant
+    ? `${wholeRoomTenant.name} has the whole room`
+    : vacantCount === 0
       ? `${room.occupied} of ${room.capacity} · full`
       : `${vacantCount} bed${vacantCount === 1 ? "" : "s"} free`;
+
+  // Beds occupied by the same tenant (a whole-room tenant fills every one)
+  // merge into a single bar instead of repeating their initials per bed.
+  const bedGroups: { key: string; bedNumber: string; span: number; tenant: (typeof room.beds)[number]["tenant"] }[] = [];
+  for (const bed of room.beds) {
+    const last = bedGroups[bedGroups.length - 1];
+    if (last && last.tenant?.id === bed.tenant?.id) last.span += 1;
+    else bedGroups.push({ key: bed.bedNumber, bedNumber: bed.bedNumber, span: 1, tenant: bed.tenant });
+  }
 
   return (
     <Panel className="flex flex-col gap-2.5 p-3">
@@ -277,32 +290,43 @@ function RoomCard({
       </div>
 
       <div className="flex gap-1">
-        {room.beds.map((bed) =>
-          bed.tenant ? (
+        {bedGroups.map((group) =>
+          group.tenant ? (
             <Link
-              key={bed.bedNumber}
-              href={`/tenants/${bed.tenant.id}`}
-              title={bed.tenant.name}
-              className={`flex h-[22px] flex-1 items-center justify-center rounded-[6px] text-[9px] font-bold transition-opacity hover:opacity-90 ${
-                notice.has(bed.tenant.id) ? "bg-marigold text-marigold-foreground" : "bg-primary text-primary-foreground"
+              key={group.key}
+              href={`/tenants/${group.tenant.id}`}
+              title={group.tenant.name}
+              style={{ flexGrow: group.span }}
+              className={`flex h-[22px] items-center justify-center rounded-[6px] text-[9px] font-bold transition-opacity hover:opacity-90 ${
+                notice.has(group.tenant.id) ? "bg-marigold text-marigold-foreground" : "bg-primary text-primary-foreground"
               }`}
             >
-              {initials(bed.tenant.name)}
+              {initials(group.tenant.name)}
             </Link>
           ) : (
             <button
-              key={bed.bedNumber}
-              onClick={() => onAssign(bed.bedNumber)}
-              title={`Bed ${bed.bedNumber} · vacant, tap to assign`}
-              className="h-[22px] flex-1 rounded-[6px] bg-input transition-opacity hover:opacity-70"
+              key={group.key}
+              onClick={() => onAssign(group.bedNumber)}
+              style={{ flexGrow: group.span }}
+              title={`Bed ${group.bedNumber} · vacant, tap to assign`}
+              className="h-[22px] rounded-[6px] bg-input transition-opacity hover:opacity-70"
             />
           )
         )}
       </div>
 
-      <p className="text-[11px] text-muted-foreground">
-        {noteLine}
-      </p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] text-muted-foreground">{noteLine}</p>
+        {room.occupied === 0 && room.capacity > 1 && (
+          <button
+            type="button"
+            onClick={() => onAssign(FULL_ROOM_BED)}
+            className="text-[11px] font-semibold text-primary hover:underline"
+          >
+            Give whole room to one tenant
+          </button>
+        )}
+      </div>
 
       <div className="flex items-center justify-between border-t border-border/70 pt-2.5">
         <p className="text-xs text-muted-foreground">
@@ -322,6 +346,14 @@ function RoomCard({
               alt="Meter reading proof"
               downloadName={`room-${room.number}-meter-${dateISO(room.openReading.startDate)}.jpg`}
               thumbClassName="h-10 w-10 shrink-0 rounded-lg border border-border object-cover"
+              onChange={async (url) => {
+                await setMeterPhoto(manager, room.openReading!.id, url);
+                router.refresh();
+              }}
+              onDelete={async () => {
+                await setMeterPhoto(manager, room.openReading!.id, null);
+                router.refresh();
+              }}
             />
           )}
           <div className="min-w-0 flex-1">
@@ -656,25 +688,34 @@ function AssignDialog({
   onDone: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const wholeRoom = state?.bedNumber === FULL_ROOM_BED;
 
   async function assign(tenantId: string) {
     if (!state) return;
     setBusy(true);
-    await assignTenantToRoom(manager, tenantId, state.room.id, state.bedNumber);
-    toast.success(`Moved into room ${state.room.number}`);
-    setBusy(false);
-    onClose();
-    onDone();
+    try {
+      await assignTenantToRoom(manager, tenantId, state.room.id, state.bedNumber);
+      toast.success(wholeRoom ? `Given the whole of room ${state.room.number}` : `Moved into room ${state.room.number}`);
+      onClose();
+      onDone();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't move them in.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
     <Dialog open={!!state} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>
-            Room {state?.room.number} · bed {state?.bedNumber}
-          </DialogTitle>
+          <DialogTitle>Room {state?.room.number} · {wholeRoom ? "whole room" : `bed ${state?.bedNumber}`}</DialogTitle>
         </DialogHeader>
+        {wholeRoom && (
+          <p className="-mt-2 text-xs text-muted-foreground">
+            Rent is set to the room&apos;s full amount, {state ? inr(state.room.rentAmount) : ""}, not the per-bed share.
+          </p>
+        )}
         {candidates.length === 0 ? (
           <p className="py-4 text-sm text-muted-foreground">
             Everyone already has a bed. Add a tenant first, or move someone out of their current room.
@@ -689,10 +730,7 @@ function AssignDialog({
                 onClick={() => assign(t.id)}
                 className="flex w-full items-center gap-3 rounded-xl border border-border px-3 py-2 text-left transition-colors hover:bg-muted disabled:opacity-50"
               >
-                <Avatar className="h-8 w-8">
-                  <AvatarImage src={t.photoUrl ?? undefined} />
-                  <AvatarFallback className="text-[10px]">{initials(t.name)}</AvatarFallback>
-                </Avatar>
+                <ZoomableAvatar src={t.photoUrl} name={t.name} className="h-8 w-8" fallbackClassName="text-[10px]" />
                 <span className="text-sm font-semibold">{t.name}</span>
               </button>
             ))}

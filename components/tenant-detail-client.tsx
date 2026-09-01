@@ -5,9 +5,8 @@ import { useRouter } from "next/navigation";
 import { Bar, BarChart, Cell, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { ImageLightbox, ZoomableImage } from "@/components/image-viewer";
+import { ZoomableAvatar, ZoomableImage } from "@/components/image-viewer";
 import {
   ChevronDown,
   ChevronRight,
@@ -31,8 +30,8 @@ import { inr, fmtDate, dateISO, paymentMethodLabel, todayISO } from "@/lib/forma
 import { CHARGE_TYPE_LABELS, chargeOutstanding, chargePaid, num, periodLabel, periodOf, summariseCharges } from "@/lib/charges";
 import { buildStatement, type Statement, type StatementLine, type StatementMonth } from "@/lib/statement";
 import { type Signature } from "@/lib/messages";
-import { deleteTenant, cancelNotice } from "@/app/actions/tenants";
-import { deleteElectricityBill } from "@/app/actions/electricity";
+import { deleteTenant, cancelNotice, setTenantImage } from "@/app/actions/tenants";
+import { deleteElectricityBill, setMeterPhoto } from "@/app/actions/electricity";
 import { useManager } from "@/lib/manager-context";
 import { TenantFormDialog } from "@/components/tenant-form-dialog";
 import { CheckoutDialog } from "@/components/checkout-dialog";
@@ -76,7 +75,32 @@ export function TenantDetailClient({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [shareMsg, setShareMsg] = useState<{ title: string; subject: string; message: string } | null>(null);
   const [duesReminderOpen, setDuesReminderOpen] = useState(false);
-  const [avatarOpen, setAvatarOpen] = useState(false);
+
+  // Change/Delete from inside the image viewer, for the tenant's own photos.
+  function imageActions(field: "photoUrl" | "aadhaarFrontUrl" | "aadhaarBackUrl") {
+    return {
+      onChange: async (url: string) => {
+        await setTenantImage(manager, tenant.id, field, url);
+        router.refresh();
+      },
+      onDelete: async () => {
+        await setTenantImage(manager, tenant.id, field, null);
+        router.refresh();
+      },
+    };
+  }
+  function meterPhotoActions(billId: string) {
+    return {
+      onChange: async (url: string) => {
+        await setMeterPhoto(manager, billId, url);
+        router.refresh();
+      },
+      onDelete: async () => {
+        await setMeterPhoto(manager, billId, null);
+        router.refresh();
+      },
+    };
+  }
   const [paying, setPaying] = useState<PayTarget | null>(null);
 
   const currentAgreement = tenant.agreements[0];
@@ -131,28 +155,14 @@ export function TenantDetailClient({
       <Panel>
         {/* 1. Identity row */}
         <div className="mb-4 flex items-center gap-4">
-          <button
-            type="button"
-            onClick={() => tenant.photoUrl && setAvatarOpen(true)}
-            className={tenant.photoUrl ? "cursor-zoom-in" : "cursor-default"}
-            aria-label={tenant.photoUrl ? "View photo full size" : undefined}
-          >
-            <Avatar className="h-[52px] w-[52px] rounded-[18px] bg-primary [&_[data-slot=avatar-fallback]]:rounded-[18px] [&_[data-slot=avatar-fallback]]:bg-primary [&_[data-slot=avatar-fallback]]:text-primary-foreground [&_[data-slot=avatar-image]]:rounded-[18px]">
-              <AvatarImage src={tenant.photoUrl ?? undefined} />
-              <AvatarFallback className="font-display text-[17px] font-bold">
-                {tenant.name.slice(0, 2).toUpperCase()}
-              </AvatarFallback>
-            </Avatar>
-          </button>
-          {tenant.photoUrl && (
-            <ImageLightbox
-              src={tenant.photoUrl}
-              alt={tenant.name}
-              downloadName={`${tenant.name}-photo.jpg`}
-              open={avatarOpen}
-              onOpenChange={setAvatarOpen}
-            />
-          )}
+          <ZoomableAvatar
+            src={tenant.photoUrl}
+            name={tenant.name}
+            className="h-[52px] w-[52px] rounded-[18px] bg-primary [&_[data-slot=avatar-fallback]]:rounded-[18px] [&_[data-slot=avatar-fallback]]:bg-primary [&_[data-slot=avatar-fallback]]:text-primary-foreground [&_[data-slot=avatar-image]]:rounded-[18px]"
+            fallbackClassName="font-display text-[17px] font-bold"
+            downloadName={`${tenant.name}-photo.jpg`}
+            {...imageActions("photoUrl")}
+          />
           <div className="min-w-0 flex-1">
             <p className="truncate font-display text-[20px] font-bold tracking-tight">{tenant.name}</p>
             <p className="truncate text-xs text-muted-foreground">
@@ -279,6 +289,7 @@ export function TenantDetailClient({
                 alt={`${tenant.idProofType} front`}
                 downloadName={`${tenant.name}-${tenant.idProofType}-front.jpg`}
                 thumbClassName="h-16 w-24 rounded-lg border border-border object-cover"
+                {...imageActions("aadhaarFrontUrl")}
               />
             )}
             {tenant.aadhaarBackUrl && (
@@ -287,6 +298,7 @@ export function TenantDetailClient({
                 alt={`${tenant.idProofType} back`}
                 downloadName={`${tenant.name}-${tenant.idProofType}-back.jpg`}
                 thumbClassName="h-16 w-24 rounded-lg border border-border object-cover"
+                {...imageActions("aadhaarBackUrl")}
               />
             )}
           </div>
@@ -359,6 +371,7 @@ export function TenantDetailClient({
                           alt="Meter reading proof"
                           downloadName={`${tenant.name}-meter-${dateISO(b.startDate)}.jpg`}
                           thumbClassName="h-8 w-8 shrink-0 rounded object-cover"
+                          {...meterPhotoActions(b.id)}
                         />
                       )}
                       <div className="min-w-0">

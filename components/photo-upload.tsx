@@ -4,16 +4,24 @@ import { useRef, useState } from "react";
 import { upload } from "@vercel/blob/client";
 import { Camera, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ZoomableImage } from "@/components/image-viewer";
 import { toast } from "sonner";
 
+/**
+ * Pick-and-upload for one photo. Once a photo is set, its thumbnail opens
+ * full size (zoom, download) with Change and Delete right there in the
+ * viewer, the same way the photo can be changed from the button beside it.
+ */
 export function PhotoUpload({
   value,
   onChange,
   label = "Add photo",
+  downloadName,
 }: {
   value: string | null | undefined;
   onChange: (url: string) => void;
   label?: string;
+  downloadName?: string;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -39,8 +47,14 @@ export function PhotoUpload({
   return (
     <div className="flex items-center gap-3">
       {value ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={value} alt="" className="h-14 w-14 rounded-lg border object-cover" />
+        <ZoomableImage
+          src={value}
+          alt={label}
+          downloadName={downloadName}
+          thumbClassName="h-14 w-14 rounded-lg border object-cover"
+          onChange={onChange}
+          onDelete={() => onChange("")}
+        />
       ) : (
         <div className="flex h-14 w-14 items-center justify-center rounded-lg border border-dashed bg-muted">
           <Camera className="h-4 w-4 text-muted-foreground" />

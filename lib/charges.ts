@@ -28,6 +28,12 @@ export function splitEvenly(total: number, parts: number): number[] {
   return Array.from({ length: parts }, (_, i) => (base + (i < remainder ? sign : 0)) / 100);
 }
 
+/**
+ * The `bedNumber` sentinel for a tenant who has taken every bed in a room
+ * (privately, at the full room rent) rather than sharing a specific one.
+ */
+export const FULL_ROOM_BED = "full";
+
 export type RoomForSplit = {
   rentAmount: Money;
   capacity: number;

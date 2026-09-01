@@ -205,6 +205,19 @@ export async function recordElectricityCharge(
  * Deleting a reading takes its charges and its main-meter expense with it,
  * since both cascade from the foreign key, so nothing is left stranded.
  */
+/** Replace or remove (url = null) a meter reading's proof photo from the image viewer. */
+export async function setMeterPhoto(actor: string, billId: string, url: string | null) {
+  const bill = await prisma.electricityBill.update({
+    where: { id: billId },
+    data: { photoUrl: url },
+    include: { room: { select: { number: true, tenants: { where: { status: "ACTIVE" }, select: { id: true } } } } },
+  });
+  await logActivity(actor, url ? "Meter photo changed" : "Meter photo removed", bill.room ? `Room ${bill.room.number}` : "");
+  revalidatePath("/rooms");
+  for (const t of bill.room?.tenants ?? []) revalidatePath(`/tenants/${t.id}`);
+  if (bill.tenantId) revalidatePath(`/tenants/${bill.tenantId}`);
+}
+
 export async function deleteElectricityBill(actor: string, id: string, tenantId?: string) {
   await prisma.electricityBill.delete({ where: { id } });
   await logActivity(actor, "Electricity reading deleted", id);

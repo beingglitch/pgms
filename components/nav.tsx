@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { BellRing, BookOpen, DoorOpen, Home, LogOut, Settings, Users, Wallet } from "lucide-react";
 import { useManager } from "@/lib/manager-context";
+import { ZoomableImage } from "@/components/image-viewer";
 import { signOut } from "@/app/actions/auth";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -60,8 +61,12 @@ export function Nav({ pgName, shortName, logoUrl }: { pgName: string; shortName:
         <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <Link href="/" className="flex min-w-0 items-center gap-2.5">
             {logoUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={logoUrl} alt="" className="h-9 w-9 shrink-0 rounded-xl object-cover" />
+              <ZoomableImage
+                src={logoUrl}
+                alt={`${pgName} logo`}
+                downloadName="logo.png"
+                thumbClassName="h-9 w-9 shrink-0 rounded-xl object-cover"
+              />
             ) : (
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary font-display text-xs font-bold text-primary-foreground">
                 {shortName || "PG"}

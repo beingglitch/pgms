@@ -143,7 +143,7 @@ export function SettingsClient({ pgInfo }: { pgInfo: PgInfo }) {
         </div>
         <div>
           <Label className="mb-1.5">Logo</Label>
-          <PhotoUpload value={pg.logoUrl} onChange={(url) => setPg({ ...pg, logoUrl: url })} label="Upload logo" />
+          <PhotoUpload value={pg.logoUrl} onChange={(url) => setPg({ ...pg, logoUrl: url })} label="Upload logo" downloadName="logo.png" />
         </div>
         <div>
           <Label className="mb-1.5">Address</Label>
