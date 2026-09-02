@@ -22,7 +22,8 @@ import { deleteLedgerEntry, listLedger } from "@/app/actions/ledger";
 import { listOutstandingByTenant, waiveCharge } from "@/app/actions/charges";
 import { deleteExpense, listExpenses } from "@/app/actions/expenses";
 import { listSecurityDeposits } from "@/app/actions/reports";
-import { bucketDuesAging, chargeOutstanding, CHARGE_TYPE_LABELS, num, periodLabel } from "@/lib/charges";
+import { bucketDuesAging, chargeOutstanding, chargePaid, CHARGE_TYPE_LABELS, num, periodLabel } from "@/lib/charges";
+import { AdjustChargeDialog } from "@/components/adjust-charge-dialog";
 import { type Signature } from "@/lib/messages";
 import { useManager } from "@/lib/manager-context";
 import { inr, fmtDate, monthKey, todayISO, daysFromNowISO, dateISO, paymentMethodLabel } from "@/lib/format";
@@ -686,6 +687,7 @@ function DueCard({
 
   const roomLabel = tenant.room ? `${tenant.room.floor.name} · Room ${tenant.room.number}` : tenant.roomNumber;
   const [confirmWaive, setConfirmWaive] = useState(false);
+  const [adjusting, setAdjusting] = useState<{ id: string; description: string; amount: number; paid: number } | null>(null);
   const lastCharge = open[open.length - 1];
 
   // The single oldest open charge, for the compact "Room 301 · Rent Jun · 63
@@ -732,7 +734,20 @@ function DueCard({
             <KhataRow
               key={charge.id}
               className="py-2.5"
-              amount={<Amount value={num(charge.amount)} tone="owed" size="sm" />}
+              amount={
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() =>
+                      setAdjusting({ id: charge.id, description: charge.description, amount: num(charge.amount), paid: chargePaid(charge) })
+                    }
+                    className="text-[11px] font-semibold text-muted-foreground hover:text-foreground"
+                    title="Settle for a different amount"
+                  >
+                    Edit
+                  </button>
+                  <Amount value={num(charge.amount)} tone="owed" size="sm" />
+                </div>
+              }
             >
               <div className="flex items-start gap-2">
                 <span className="mt-0.5 shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
@@ -813,6 +828,10 @@ function DueCard({
           )}
         </DialogContent>
       </Dialog>
+
+      {adjusting && (
+        <AdjustChargeDialog key={adjusting.id} open onOpenChange={(o) => !o && setAdjusting(null)} charge={adjusting} />
+      )}
     </Panel>
   );
 }

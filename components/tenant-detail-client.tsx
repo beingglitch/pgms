@@ -37,6 +37,7 @@ import { TenantFormDialog } from "@/components/tenant-form-dialog";
 import { CheckoutDialog } from "@/components/checkout-dialog";
 import { ChargeFormDialog } from "@/components/charge-form-dialog";
 import { LedgerFormDialog } from "@/components/ledger-form-dialog";
+import { AdjustChargeDialog } from "@/components/adjust-charge-dialog";
 import { SendMessageDialog } from "@/components/send-message-dialog";
 import { SendDuesReminderDialog } from "@/components/send-dues-reminder-dialog";
 import { cn } from "@/lib/utils";
@@ -47,6 +48,8 @@ type TenantDetail = SerialisedTenant;
 
 /** The one charge a "Pay" button is settling; drives the pinned payment dialog. */
 type PayTarget = { id: string; label: string; type: StatementLine["type"]; outstanding: number };
+/** The one charge an "Edit" button is settling for a different amount. */
+type AdjustTarget = { id: string; description: string; amount: number; paid: number };
 
 const STATUS_BADGE: Record<StatementMonth["status"], { label: string; className: string }> = {
   clear: { label: "Clear", className: "bg-secondary text-primary" },
@@ -102,6 +105,7 @@ export function TenantDetailClient({
     };
   }
   const [paying, setPaying] = useState<PayTarget | null>(null);
+  const [adjusting, setAdjusting] = useState<AdjustTarget | null>(null);
 
   const currentAgreement = tenant.agreements[0];
   const summary = summariseCharges(tenant.charges);
@@ -112,6 +116,10 @@ export function TenantDetailClient({
 
   function payCharge(c: { id: string; type: StatementLine["type"]; description: string }, outstanding: number) {
     setPaying({ id: c.id, type: c.type, label: c.description, outstanding });
+  }
+
+  function adjustCharge(c: { id: string; description: string; amount: number; paid: number }) {
+    setAdjusting({ id: c.id, description: c.description, amount: c.amount, paid: c.paid });
   }
 
   function agreementMessage() {
@@ -238,6 +246,14 @@ export function TenantDetailClient({
                     </p>
                     <div className="flex shrink-0 items-center gap-2">
                       <span className="khata-amount text-[12.5px] font-bold text-ledger">{inr(outstanding)}</span>
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        onClick={() => adjustCharge({ id: c.id, description: c.description, amount: num(c.amount), paid: chargePaid(c) })}
+                        title="Settle for a different amount"
+                      >
+                        Edit
+                      </Button>
                       <Button size="xs" variant="outline" onClick={() => payCharge(c, outstanding)}>
                         Pay
                       </Button>
@@ -409,7 +425,11 @@ export function TenantDetailClient({
       </Panel>
 
       {/* 2b. Month by month */}
-      <MonthByMonth statement={statement} onPay={(line) => payCharge(line, line.outstanding)} />
+      <MonthByMonth
+        statement={statement}
+        onPay={(line) => payCharge(line, line.outstanding)}
+        onAdjust={(line) => adjustCharge({ id: line.id, description: line.description, amount: line.billed, paid: line.paid })}
+      />
 
       {/* 3. Twelve months of paying */}
       <TwelveMonthsCard tenant={tenant} />
@@ -533,6 +553,14 @@ export function TenantDetailClient({
           chargeType={paying.type}
         />
       )}
+      {adjusting && (
+        <AdjustChargeDialog
+          key={adjusting.id}
+          open
+          onOpenChange={(o) => !o && setAdjusting(null)}
+          charge={adjusting}
+        />
+      )}
       {shareMsg && (
         <SendMessageDialog
           open={!!shareMsg}
@@ -596,7 +624,15 @@ type ChargeRow = TenantDetail["charges"][number];
  * whenever the money actually came in. Newest first; months with nothing
  * on them (before they joined, after they left) are skipped.
  */
-function MonthByMonth({ statement, onPay }: { statement: Statement; onPay: (line: StatementLine) => void }) {
+function MonthByMonth({
+  statement,
+  onPay,
+  onAdjust,
+}: {
+  statement: Statement;
+  onPay: (line: StatementLine) => void;
+  onAdjust: (line: StatementLine) => void;
+}) {
   const [openPeriod, setOpenPeriod] = useState<string | null>(null);
   const months = [...statement.months].reverse().filter((m) => !m.empty);
 
@@ -680,6 +716,11 @@ function MonthByMonth({ statement, onPay }: { statement: Statement; onPay: (line
                                 <p className="khata-amount text-[11px] text-ledger">{inr(line.outstanding)} due</p>
                               )}
                             </div>
+                            {!line.waived && (
+                              <Button size="xs" variant="ghost" onClick={() => onAdjust(line)} title="Settle for a different amount">
+                                Edit
+                              </Button>
+                            )}
                             {line.outstanding > 0.005 && (
                               <Button size="xs" variant="outline" onClick={() => onPay(line)}>
                                 Pay

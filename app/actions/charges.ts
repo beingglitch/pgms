@@ -8,10 +8,12 @@ import {
   chargeOutstanding,
   dayRangeLabel,
   effectiveRent,
+  num,
   pendingRentPeriods,
   periodLabel,
   periodOf,
   planAllocations,
+  round2,
   roomOccupantWeights,
   splitByWeights,
   summariseCharges,
@@ -249,6 +251,38 @@ export async function waiveCharge(actor: string, id: string, waived: boolean) {
   });
   await logActivity(actor, waived ? "Charge waived" : "Waiver removed", `${charge.tenant.name} · ${charge.description}`);
   revalidateMoneyViews(charge.tenantId);
+}
+
+/**
+ * Change what a charge is actually for, e.g. rent billed at ₹8,333 (a
+ * pro-rated month) but owner and tenant settle on a flat ₹8,000 - so the
+ * charge reads ₹8,000 and closes out fully once that's paid, rather than
+ * leaving ₹333 sitting outstanding forever. Can't go below what's already
+ * been paid against it, that would leave the charge "overpaid" instead of
+ * settled; waive or delete it if the whole thing should go away instead.
+ */
+export async function adjustChargeAmount(actor: string, id: string, newAmount: number, note?: string) {
+  const charge = await prisma.charge.findUnique({
+    where: { id },
+    include: { allocations: { select: { amount: true } }, tenant: { select: { name: true } } },
+  });
+  if (!charge) throw new Error("That charge no longer exists.");
+
+  const paid = round2(charge.allocations.reduce((sum, a) => sum + num(a.amount), 0));
+  if (newAmount < paid) {
+    throw new Error(`₹${paid} has already been paid against this - the new amount can't be less than that.`);
+  }
+
+  const oldAmount = num(charge.amount);
+  await prisma.charge.update({ where: { id }, data: { amount: newAmount } });
+
+  await logActivity(
+    actor,
+    "Charge amount adjusted",
+    `${charge.tenant.name} · ${charge.description} · ₹${oldAmount} → ₹${newAmount}${note ? ` (${note})` : ""}`
+  );
+  revalidateMoneyViews(charge.tenantId);
+  return { oldAmount, newAmount };
 }
 
 export async function deleteCharge(actor: string, id: string) {
