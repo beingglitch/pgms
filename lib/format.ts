@@ -1,5 +1,5 @@
 export function inr(n: number | string | { toString(): string } | null | undefined) {
-  return `₹${Number(n || 0).toLocaleString("en-IN")}`;
+  return `₹${Math.round(Number(n || 0)).toLocaleString("en-IN")}`;
 }
 
 export function fmtDate(d: Date | string | null | undefined) {

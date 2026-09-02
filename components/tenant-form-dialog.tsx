@@ -17,6 +17,7 @@ import {
 import { PhotoUpload } from "@/components/photo-upload";
 import { useManager } from "@/lib/manager-context";
 import { createTenant, updateTenant, updateAgreementFields, type TenantInput, type AgreementInput } from "@/app/actions/tenants";
+import { assignTenantToRoom } from "@/app/actions/rooms";
 import { todayISO, inr, fmtDate } from "@/lib/format";
 import { dayRangeLabel, FULL_ROOM_BED, pendingRentPeriods, periodLabel } from "@/lib/charges";
 import { waLink } from "@/lib/messaging";
@@ -110,13 +111,16 @@ export function TenantFormDialog({
 
   const [saving, setSaving] = useState(false);
 
-  // Onboarding-only room/bed picker. Room assignment after onboarding still
-  // goes through the Rooms page; this just saves a trip for the common case
-  // of "this tenant has a bed from day one". Laid out as floor -> room ->
-  // tappable bed chips rather than cascading dropdowns, and only ever shows
-  // beds that are actually free (plus "whole room" when nobody's in it yet).
-  const [pickedRoomId, setPickedRoomId] = useState<string | null>(null);
-  const [pickedBed, setPickedBed] = useState<string | null>(null);
+  // Floor -> room -> tappable bed chips, shared by onboarding and editing.
+  // At onboarding this only ever shows free beds (plus "whole room" when
+  // nobody's in it yet); when editing, `listRoomOptions(id)` leaves the
+  // tenant's own current bed out of the occupancy count so it shows up as
+  // pickable too, rather than looking taken by themselves.
+  const [pickedRoomId, setPickedRoomId] = useState<string | null>(initial?.roomId ?? null);
+  const [pickedBed, setPickedBed] = useState<string | null>(initial?.bedNumber ?? null);
+  // Edit-mode-only: explicitly taking a room-linked tenant out of the
+  // building, distinct from "haven't picked a bed yet".
+  const [removedFromRoom, setRemovedFromRoom] = useState(false);
   const [meterStartReading, setMeterStartReading] = useState("");
   const [meterStartPhotoUrl, setMeterStartPhotoUrl] = useState("");
   const [advancePayment, setAdvancePayment] = useState("");
@@ -130,6 +134,7 @@ export function TenantFormDialog({
   function pickBed(room: RoomOption, bed: string) {
     setPickedRoomId(room.id);
     setPickedBed(bed);
+    setRemovedFromRoom(false);
     setF((s) => ({
       ...s,
       roomNumber: room.number,
@@ -141,6 +146,7 @@ export function TenantFormDialog({
   function clearRoomPick() {
     setPickedRoomId(null);
     setPickedBed(null);
+    setRemovedFromRoom(false);
   }
 
   function set<K extends keyof TenantInput>(key: K, value: TenantInput[K]) {
@@ -211,7 +217,7 @@ export function TenantFormDialog({
       toast.error("Name and phone are required");
       return;
     }
-    if (isNew && pickedRoomId && !pickedBed) {
+    if (pickedRoomId && !pickedBed) {
       toast.error("Pick which bed (or the whole room)");
       return;
     }
@@ -253,6 +259,25 @@ export function TenantFormDialog({
         // hand over; the form itself resets once this closes.
         setSubmitted(true);
       } else {
+        const originalRoomId = initial?.roomId ?? null;
+        const originalBed = initial?.bedNumber ?? null;
+        const roomChanged = removedFromRoom
+          ? originalRoomId !== null
+          : pickedRoomId !== originalRoomId || pickedBed !== originalBed;
+
+        // The only path allowed to move a tenant's room/bed - keeps the
+        // Room relation, rent, and the old room's electricity state in
+        // sync. Runs before updateTenant so the plain-field save below
+        // sees the already-updated roomId.
+        if (roomOptions.length > 0 && roomChanged) {
+          await assignTenantToRoom(
+            manager,
+            initial!.id!,
+            removedFromRoom ? null : pickedRoomId,
+            removedFromRoom ? null : pickedBed
+          );
+        }
+
         await updateTenant(manager, initial!.id!, f);
         if (currentAgreement) {
           await updateAgreementFields(manager, initial!.id!, {
@@ -266,8 +291,8 @@ export function TenantFormDialog({
         onOpenChange(false);
         router.refresh();
       }
-    } catch {
-      toast.error("Something went wrong");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setSaving(false);
     }
@@ -329,11 +354,13 @@ export function TenantFormDialog({
 
           <p className="text-xs font-bold uppercase tracking-wide text-amber-700">Room & rent</p>
 
-          {isNew && roomOptions.length > 0 && (
+          {roomOptions.length > 0 && (
             <div className="rounded-xl border border-border bg-muted/30 p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
-                <Label>Room (optional, assign later from Rooms if you&apos;d rather)</Label>
-                {pickedRoomId && (
+                <Label>
+                  {isNew ? "Room (optional, assign later from Rooms if you'd rather)" : "Room assignment"}
+                </Label>
+                {isNew && pickedRoomId && (
                   <button
                     type="button"
                     onClick={clearRoomPick}
@@ -342,7 +369,39 @@ export function TenantFormDialog({
                     Clear
                   </button>
                 )}
+                {!isNew && removedFromRoom && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPickedRoomId(initial?.roomId ?? null);
+                      setPickedBed(initial?.bedNumber ?? null);
+                      setRemovedFromRoom(false);
+                    }}
+                    className="shrink-0 text-[11px] font-semibold text-muted-foreground hover:text-foreground"
+                  >
+                    Undo
+                  </button>
+                )}
+                {!isNew && !removedFromRoom && (pickedRoomId || initial?.roomId) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPickedRoomId(null);
+                      setPickedBed(null);
+                      setRemovedFromRoom(true);
+                    }}
+                    className="shrink-0 text-[11px] font-semibold text-destructive hover:underline"
+                  >
+                    Move out (no room)
+                  </button>
+                )}
               </div>
+
+              {removedFromRoom && (
+                <p className="mb-2 text-xs text-destructive">
+                  Will be removed from their current room and bed when saved.
+                </p>
+              )}
 
               {availableRooms.length === 0 ? (
                 <p className="text-xs text-muted-foreground">No beds free right now.</p>
@@ -406,7 +465,7 @@ export function TenantFormDialog({
                 </p>
               )}
 
-              {pickedBed && pickedRoom && (
+              {isNew && pickedBed && pickedRoom && (
                 <div className="mt-3 border-t border-border/70 pt-3">
                   <Label className="mb-1.5">
                     Current meter reading <span className="text-destructive">*</span>
@@ -432,7 +491,7 @@ export function TenantFormDialog({
           )}
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {(!isNew || roomOptions.length === 0 || !pickedBed) && (
+            {roomOptions.length === 0 && (
               <>
                 <Field label="Room number">
                   <Input value={f.roomNumber} onChange={(e) => set("roomNumber", e.target.value)} />

@@ -12,6 +12,7 @@ import { inr, initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { TenantModel } from "@/lib/generated/prisma/models";
 import type { listRoomOptions } from "@/app/actions/rooms";
+import { FULL_ROOM_BED } from "@/lib/charges";
 
 type TenantRow = Omit<TenantModel, "rentAmount" | "rentOverride" | "depositAmount" | "refundAmount"> & {
   rentAmount: number;
@@ -22,9 +23,15 @@ type TenantRow = Omit<TenantModel, "rentAmount" | "rentOverride" | "depositAmoun
 };
 type RoomOption = Awaited<ReturnType<typeof listRoomOptions>>[number];
 
-const FILTERS = ["owing", "notice", "all", "vacated"] as const;
+const FILTERS = ["owing", "notice", "all", "fullroom", "vacated"] as const;
 type Filter = (typeof FILTERS)[number];
-const FILTER_LABELS: Record<Filter, string> = { all: "All", owing: "Owing", notice: "On notice", vacated: "Vacated" };
+const FILTER_LABELS: Record<Filter, string> = {
+  all: "All",
+  owing: "Owing",
+  notice: "On notice",
+  fullroom: "Full room",
+  vacated: "Vacated",
+};
 
 export function TenantsClient({
   tenants,
@@ -51,6 +58,8 @@ export function TenantsClient({
         return t.status === "ACTIVE" && !!t.noticeDate;
       case "owing":
         return t.status === "ACTIVE" && (outstandingByTenant[t.id]?.amount ?? 0) > 0.005;
+      case "fullroom":
+        return t.status === "ACTIVE" && t.bedNumber === FULL_ROOM_BED;
     }
   }
 

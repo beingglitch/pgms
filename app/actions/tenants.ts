@@ -140,12 +140,11 @@ export async function createTenant(actor: string, input: TenantInput, agreement:
       roomId: input.roomId,
       roomNumber: room?.number ?? input.roomNumber,
       bedNumber: input.bedNumber,
+      // Whatever was actually agreed at onboarding - the picker fills this
+      // in with the room's per-bed share (or full amount) as a starting
+      // suggestion, but it's editable before submit and that's what's
+      // billed, not a live recompute from the room.
       rentAmount: input.rentAmount,
-      // Taking the whole room pins rent to the room's full amount: the
-      // per-bed split (what effectiveRent() would otherwise fall back to
-      // for any room-linked tenant) no longer applies with nobody to share
-      // it with.
-      rentOverride: input.bedNumber === FULL_ROOM_BED && room ? room.rentAmount : undefined,
       depositAmount: input.depositAmount,
       depositMethod: input.depositMethod,
       depositChequeNumber: input.depositChequeNumber,
@@ -246,11 +245,30 @@ export async function createTenant(actor: string, input: TenantInput, agreement:
   return tenant;
 }
 
+/**
+ * Room/bed are never edited here directly - they're a mirror of the real
+ * `roomId` relation, so drifting them from a plain text edit (e.g. "102" ->
+ * "103" without actually moving anyone) used to silently desync the tenant
+ * from their real room. Any room/bed change must go through
+ * `assignTenantToRoom`, which keeps the relation, rent, and the old room's
+ * electricity state moving together.
+ */
 export async function updateTenant(actor: string, id: string, input: Partial<TenantInput>) {
+  const existing = await prisma.tenant.findUnique({ where: { id }, select: { roomId: true } });
+  // roomId is onboarding-only (createTenant); room moves for an existing
+  // tenant always go through assignTenantToRoom, never a plain field patch.
+  const { roomNumber, bedNumber, ...rest } = input;
+  delete rest.roomId;
+  const data: Partial<TenantInput> = { ...rest };
+  if (!existing?.roomId) {
+    if (roomNumber !== undefined) data.roomNumber = roomNumber;
+    if (bedNumber !== undefined) data.bedNumber = bedNumber;
+  }
+
   const tenant = await prisma.tenant.update({
     where: { id },
     data: {
-      ...input,
+      ...data,
       joinDate: input.joinDate ? new Date(input.joinDate) : undefined,
     },
   });

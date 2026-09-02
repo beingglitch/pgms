@@ -43,6 +43,7 @@ import { SendDuesReminderDialog } from "@/components/send-dues-reminder-dialog";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { SerialisedTenant } from "@/app/(app)/tenants/[id]/page";
+import type { listRoomOptions } from "@/app/actions/rooms";
 
 type TenantDetail = SerialisedTenant;
 
@@ -63,11 +64,13 @@ export function TenantDetailClient({
   paymentLink,
   signature,
   electricityRate,
+  roomOptions,
 }: {
   tenant: TenantDetail;
   paymentLink: string;
   signature: Signature;
   electricityRate: number;
+  roomOptions: Awaited<ReturnType<typeof listRoomOptions>>;
 }) {
   const router = useRouter();
   const { manager } = useManager();
@@ -503,6 +506,7 @@ export function TenantDetailClient({
         onOpenChange={setEditOpen}
         initial={{ ...tenant, rentAmount: Number(tenant.rentAmount), depositAmount: Number(tenant.depositAmount), joinDate: tenant.joinDate.toISOString().slice(0, 10) } as never}
         electricityRatePerUnit={electricityRate}
+        roomOptions={roomOptions}
         currentAgreement={
           currentAgreement
             ? {

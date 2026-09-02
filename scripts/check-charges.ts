@@ -34,10 +34,10 @@ check("triple, per bed", rentShare(triple), 8000);
 check("double, per bed", rentShare({ rentAmount: 10000, capacity: 2 }), 5000);
 check("single, per bed", rentShare({ rentAmount: 10000, capacity: 1 }), 10000);
 
-// Rent resolution order.
-check("per-tenant override wins", effectiveRent({ rentAmount: 5000, rentOverride: 6500, room: triple }), 6500);
-check("room split used", effectiveRent({ rentAmount: 5000, rentOverride: null, room: triple }), 8000);
-check("no room -> own amount", effectiveRent({ rentAmount: 5000, rentOverride: null, room: null }), 5000);
+// Rent resolution order: a per-tenant override always wins, otherwise it's
+// whatever's on the tenant's own record - never recomputed from the room.
+check("per-tenant override wins", effectiveRent({ rentAmount: 5000, rentOverride: 6500 }), 6500);
+check("no override -> own amount", effectiveRent({ rentAmount: 8000, rentOverride: null }), 8000);
 
 // Calendar-month arithmetic.
 check("add periods forward", addPeriods("2026-11", 3), "2027-02");

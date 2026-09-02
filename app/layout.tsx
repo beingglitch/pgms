@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
+import { ScrollbarActivity } from "@/components/scrollbar-activity";
 import { getPgInfo } from "@/app/actions/settings";
 
 export const dynamic = "force-dynamic";
@@ -36,6 +37,7 @@ export default function RootLayout({
       <body className="flex min-h-full flex-col bg-canvas text-foreground">
         {children}
         <Toaster />
+        <ScrollbarActivity />
       </body>
     </html>
   );

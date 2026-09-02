@@ -312,3 +312,33 @@ input[type="password"]::-ms-reveal,
 input[type="password"]::-ms-clear {
   display: none;
 }
+
+/* Every scrollable panel (dialogs included): invisible until the mouse is
+   over it or it's mid-scroll, then a thin rounded thumb - never a bare
+   rectangular OS scrollbar sitting on the edge of a rounded panel. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+*:hover,
+*.is-scrolling {
+  scrollbar-color: var(--color-border) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*:hover::-webkit-scrollbar-thumb,
+*.is-scrolling::-webkit-scrollbar-thumb {
+  background-color: var(--color-border);
+  background-clip: padding-box;
+}

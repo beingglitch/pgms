@@ -93,7 +93,7 @@ const s = StyleSheet.create({
 });
 
 function rs(n: number | string | { toString(): string } | null | undefined) {
-  return `Rs ${num(n as never).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+  return `Rs ${Math.round(num(n as never)).toLocaleString("en-IN")}`;
 }
 
 function d(v: Date | string | null | undefined) {

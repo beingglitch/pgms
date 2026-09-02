@@ -23,7 +23,7 @@ import {
 import { resetElectricityReading, setMeterPhoto } from "@/app/actions/electricity";
 import { useManager } from "@/lib/manager-context";
 import { initials, fmtDate, dateISO, inr } from "@/lib/format";
-import { FULL_ROOM_BED } from "@/lib/charges";
+import { effectiveRent, FULL_ROOM_BED } from "@/lib/charges";
 import type { Serialised } from "@/lib/serialize";
 import { ZoomableAvatar, ZoomableImage } from "@/components/image-viewer";
 import { toast } from "sonner";
@@ -59,6 +59,15 @@ function nextFloorName(existingCount: number) {
   return ORDINAL_FLOOR_NAMES[existingCount] ?? `Floor ${existingCount + 1}`;
 }
 
+/** A room is "whole-room" occupied when one tenant fills every bed slot in it. */
+function isWholeRoom(room: Room) {
+  return room.capacity > 1 && !!room.beds[0]?.tenant && room.beds.every((b) => b.tenant?.id === room.beds[0].tenant?.id);
+}
+
+const ROOM_FILTERS = ["all", "fullroom"] as const;
+type RoomFilter = (typeof ROOM_FILTERS)[number];
+const ROOM_FILTER_LABELS: Record<RoomFilter, string> = { all: "All rooms", fullroom: "Full room only" };
+
 export function RoomsClient({
   building,
   unassigned,
@@ -75,6 +84,7 @@ export function RoomsClient({
   const [roomForm, setRoomForm] = useState<{ open: boolean; floorId?: string; room?: Room }>({ open: false });
   const [assigning, setAssigning] = useState<{ room: Room; bedNumber: string } | null>(null);
   const [resetting, setResetting] = useState<string | null>(null);
+  const [roomFilter, setRoomFilter] = useState<RoomFilter>("all");
 
   async function reset(room: Room) {
     setResetting(room.id);
@@ -142,6 +152,25 @@ export function RoomsClient({
         </Panel>
       )}
 
+      {building.floors.some((f) => f.rooms.length > 0) && (
+        <div className="flex gap-2">
+          {ROOM_FILTERS.map((rf) => (
+            <button
+              key={rf}
+              type="button"
+              onClick={() => setRoomFilter(rf)}
+              className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                roomFilter === rf
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-input text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              {ROOM_FILTER_LABELS[rf]}
+            </button>
+          ))}
+        </div>
+      )}
+
       {building.floors.length === 0 && (
         <EmptyState
           icon={DoorOpen}
@@ -160,6 +189,8 @@ export function RoomsClient({
         const floorBeds = floor.rooms.reduce((s, r) => s + r.capacity, 0);
         const floorOccupied = floor.rooms.reduce((s, r) => s + r.occupied, 0);
         const floorRent = floor.rooms.reduce((s, r) => s + Number(r.rentAmount), 0);
+        const visibleRooms = roomFilter === "fullroom" ? floor.rooms.filter(isWholeRoom) : floor.rooms;
+        if (roomFilter === "fullroom" && visibleRooms.length === 0) return null;
 
         return (
           <section key={floor.id}>
@@ -180,13 +211,13 @@ export function RoomsClient({
               </div>
             </div>
 
-            {floor.rooms.length === 0 ? (
+            {visibleRooms.length === 0 ? (
               <p className="rounded-xl border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
                 No rooms on this floor yet.
               </p>
             ) : (
               <div className="grid grid-cols-2 gap-[10px]">
-                {floor.rooms.map((room) => (
+                {visibleRooms.map((room) => (
                   <RoomCard
                     key={room.id}
                     room={room}
@@ -264,10 +295,7 @@ function RoomCard({
 
   const closedReadings = room.meterReadings.filter((r) => r.endDate);
   const vacantCount = room.capacity - room.occupied;
-  const wholeRoomTenant =
-    room.capacity > 1 && room.beds[0]?.tenant && room.beds.every((b) => b.tenant?.id === room.beds[0].tenant?.id)
-      ? room.beds[0].tenant
-      : null;
+  const wholeRoomTenant = isWholeRoom(room) ? room.beds[0].tenant : null;
   const noteLine = wholeRoomTenant
     ? `${wholeRoomTenant.name} has the whole room`
     : vacantCount === 0
@@ -287,7 +315,15 @@ function RoomCard({
     <Panel className="flex flex-col gap-2.5 p-3">
       <div className="flex items-start justify-between gap-2">
         <p className="font-display text-[17px] font-semibold leading-none tracking-tight">Room {room.number}</p>
-        <p className="tabular text-[11px] text-muted-foreground">{inr(room.rentAmount)}</p>
+        <div className="text-right">
+          <p className="tabular text-[11px] text-muted-foreground">Default {inr(room.rentAmount)}</p>
+          {room.occupied > 0 && (
+            <p className="tabular text-[11px] font-semibold text-foreground">
+              Collecting {room.tenants.map((t) => inr(effectiveRent(t))).join(" + ")}
+              {room.tenants.length > 1 ? ` = ${inr(room.billedTotal)}` : ""}
+            </p>
+          )}
+        </div>
       </div>
 
       <div className="flex gap-1">
@@ -332,7 +368,7 @@ function RoomCard({
       <div className="flex items-center justify-between border-t border-border/70 pt-2.5">
         <p className="text-xs text-muted-foreground">
           <BedDouble className="mr-1 inline h-3.5 w-3.5" />
-          <strong className="tabular text-foreground">{`₹${room.perBed.toLocaleString("en-IN")}`}</strong> per bed
+          <strong className="tabular text-foreground">{inr(room.perBed)}</strong> per bed
         </p>
         <Button size="sm" variant="ghost" onClick={onEdit} title="Edit room">
           <Pencil className="h-3.5 w-3.5" />
@@ -614,8 +650,8 @@ function RoomDialog({
       toast.success(room ? "Room updated" : "Room added");
       onClose();
       onDone();
-    } catch {
-      toast.error("That room number already exists on this floor.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "That room number already exists on this floor.");
     } finally {
       setBusy(false);
     }
@@ -656,7 +692,7 @@ function RoomDialog({
             <Input type="number" value={rent} onChange={(e) => setRent(Number(e.target.value))} />
             <p className="mt-1 text-xs text-muted-foreground">
               {capacityWord(capacity)} room ·{" "}
-              <strong className="tabular text-foreground">₹{perBed.toLocaleString("en-IN")}</strong> per bed
+              <strong className="tabular text-foreground">{inr(perBed)}</strong> per bed
             </p>
           </div>
           <div className="flex gap-2 pt-1">

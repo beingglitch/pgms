@@ -53,26 +53,23 @@ export function rentShare(room: RoomForSplit): number {
 export type TenantForRent = {
   rentAmount: Money;
   rentOverride?: Money | null;
-  room?: RoomForSplit | null;
 };
 
 /**
- * The rent this tenant actually owes each month.
- *
- * A per-tenant override always wins. Otherwise it's the room's per-bed rate.
- * A tenant with no room, or a room with no rent set, falls back to the
- * amount on their own record, which is how every tenant worked before rooms
- * existed.
+ * The rent this tenant actually owes each month: whatever was decided at
+ * onboarding (or edited since) on their own record, never recomputed from
+ * the room. `rentAmount` is kept in sync with the room's per-bed share (or
+ * full amount) whenever they're assigned a bed, but that's only ever a
+ * starting suggestion - onboarding/edit can override it to a negotiated
+ * figure, and the room's own rent changing afterward shouldn't silently
+ * move an already-agreed number. `rentOverride` is a further, explicit pin
+ * on top of that (kept for charge-level settlements elsewhere).
  */
 export function effectiveRent(tenant: TenantForRent): number {
   if (tenant.rentOverride !== null && tenant.rentOverride !== undefined) {
     return num(tenant.rentOverride);
   }
-
-  const room = tenant.room;
-  if (!room || num(room.rentAmount) <= 0) return num(tenant.rentAmount);
-
-  return rentShare(room);
+  return num(tenant.rentAmount);
 }
 
 export type ChargeLike = {
