@@ -2,6 +2,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { num, periodOf, round2, summariseCharges } from "@/lib/charges";
+import { requireAccountId } from "./auth";
 
 export type PeriodCollections = Map<string, { collected: number; rent: number }>;
 
@@ -17,13 +18,14 @@ export type PeriodCollections = Map<string, { collected: number; rent: number }>
  * a billing period yet.
  */
 export async function getCollectionsByPeriod(): Promise<PeriodCollections> {
+  const accountId = await requireAccountId();
   const [allocations, payments] = await Promise.all([
     prisma.allocation.findMany({
-      where: { ledgerEntry: { type: { in: ["RENT", "OTHER"] } } },
+      where: { ledgerEntry: { accountId, type: { in: ["RENT", "OTHER"] } } },
       select: { amount: true, ledgerEntryId: true, charge: { select: { period: true, type: true } } },
     }),
     prisma.ledgerEntry.findMany({
-      where: { type: { in: ["RENT", "OTHER"] } },
+      where: { accountId, type: { in: ["RENT", "OTHER"] } },
       select: { id: true, amount: true, date: true },
     }),
   ]);
@@ -54,7 +56,8 @@ export async function getCollectionsByPeriod(): Promise<PeriodCollections> {
 
 /** Sum of `Charge.amount` (what was actually billed, waived or not) by period, for the collection-rate chart. */
 export async function getBilledByPeriod(): Promise<Map<string, number>> {
-  const charges = await prisma.charge.findMany({ select: { period: true, amount: true } });
+  const accountId = await requireAccountId();
+  const charges = await prisma.charge.findMany({ where: { accountId }, select: { period: true, amount: true } });
   const byPeriod = new Map<string, number>();
   for (const c of charges) byPeriod.set(c.period, round2((byPeriod.get(c.period) ?? 0) + num(c.amount)));
   return byPeriod;
@@ -67,7 +70,8 @@ export async function getBilledByPeriod(): Promise<Map<string, number>> {
  * hadn't vacated before its first.
  */
 export async function getOccupancyHistory(months: number) {
-  const tenants = await prisma.tenant.findMany({ select: { joinDate: true, vacatedDate: true } });
+  const accountId = await requireAccountId();
+  const tenants = await prisma.tenant.findMany({ where: { accountId }, select: { joinDate: true, vacatedDate: true } });
 
   const points: { period: string; occupied: number }[] = [];
   for (let i = months - 1; i >= 0; i--) {
@@ -92,8 +96,9 @@ export async function getOccupancyHistory(months: number) {
  * shows what's actually been given, not anyone still owing one.
  */
 export async function listSecurityDeposits() {
+  const accountId = await requireAccountId();
   const tenants = await prisma.tenant.findMany({
-    where: { status: "ACTIVE", depositAmount: { gt: 0 } },
+    where: { accountId, status: "ACTIVE", depositAmount: { gt: 0 } },
     orderBy: { name: "asc" },
     select: {
       id: true,
@@ -122,13 +127,14 @@ export async function listSecurityDeposits() {
  * back, tracked separately from collections so the two never blur together.
  */
 export async function getDepositLiability() {
+  const accountId = await requireAccountId();
   const [active, notice] = await Promise.all([
     prisma.tenant.findMany({
-      where: { status: "ACTIVE" },
+      where: { accountId, status: "ACTIVE" },
       select: { id: true, name: true, depositAmount: true, depositMethod: true, expectedVacateDate: true },
     }),
     prisma.tenant.findMany({
-      where: { status: "ACTIVE", NOT: { noticeDate: null } },
+      where: { accountId, status: "ACTIVE", NOT: { noticeDate: null } },
       orderBy: { expectedVacateDate: "asc" },
       select: {
         id: true,
@@ -163,8 +169,9 @@ export async function getDepositLiability() {
  * whatever is being deducted for damage.
  */
 export async function getCheckoutSettlement(tenantId: string) {
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
+  const accountId = await requireAccountId();
+  const tenant = await prisma.tenant.findFirst({
+    where: { id: tenantId, accountId },
     include: {
       charges: { include: { allocations: { select: { amount: true } } } },
       checkoutDeductions: true,
@@ -184,14 +191,14 @@ export async function getCheckoutSettlement(tenantId: string) {
   // actually closed out.
   const openReading = tenant.roomId
     ? await prisma.electricityBill.findFirst({
-        where: { roomId: tenant.roomId, endDate: null },
+        where: { roomId: tenant.roomId, accountId, endDate: null },
         select: { id: true, startReading: true, startDate: true, ratePerUnit: true },
       })
     : null;
 
   const roommates = tenant.roomId
     ? await prisma.tenant.findMany({
-        where: { roomId: tenant.roomId, status: "ACTIVE", id: { not: tenantId } },
+        where: { roomId: tenant.roomId, accountId, status: "ACTIVE", id: { not: tenantId } },
         select: { id: true, name: true, joinDate: true },
       })
     : [];
@@ -246,27 +253,39 @@ function toCsv(rows: Record<string, unknown>[]): string {
  * Everything in the database as CSV, one file per table.
  *
  * A single-owner app with one hosted database and no export is one bad day
- * away from losing years of records.
+ * away from losing years of records. Scoped to the signed-in account - the
+ * highest-risk spot in the app for a cross-account leak if that scoping were
+ * ever missed, since it otherwise reads every table with no filter at all.
  */
 export async function exportAllData() {
+  const accountId = await requireAccountId();
   const [tenants, ledger, charges, allocations, bills, expenses, agreements, rooms, reminders, activity] =
     await Promise.all([
-      prisma.tenant.findMany({ include: { room: { include: { floor: true } } }, orderBy: { name: "asc" } }),
-      prisma.ledgerEntry.findMany({ include: { tenant: { select: { name: true } } }, orderBy: { date: "desc" } }),
+      prisma.tenant.findMany({ where: { accountId }, include: { room: { include: { floor: true } } }, orderBy: { name: "asc" } }),
+      prisma.ledgerEntry.findMany({ where: { accountId }, include: { tenant: { select: { name: true } } }, orderBy: { date: "desc" } }),
       prisma.charge.findMany({
+        where: { accountId },
         include: { tenant: { select: { name: true } }, allocations: { select: { amount: true } } },
         orderBy: { dueDate: "desc" },
       }),
-      prisma.allocation.findMany({ include: { charge: { select: { description: true } }, ledgerEntry: { select: { receiptNo: true } } } }),
+      prisma.allocation.findMany({
+        where: { ledgerEntry: { accountId } },
+        include: { charge: { select: { description: true } }, ledgerEntry: { select: { receiptNo: true } } },
+      }),
       prisma.electricityBill.findMany({
+        where: { accountId },
         include: { room: { select: { number: true } }, tenant: { select: { name: true } } },
         orderBy: { endDate: "desc" },
       }),
-      prisma.expense.findMany({ orderBy: { date: "desc" } }),
-      prisma.agreement.findMany({ include: { tenant: { select: { name: true } } }, orderBy: { createdAt: "desc" } }),
-      prisma.room.findMany({ include: { floor: true }, orderBy: { number: "asc" } }),
-      prisma.reminder.findMany({ include: { tenant: { select: { name: true } } }, orderBy: { dueDate: "desc" } }),
-      prisma.activityLog.findMany({ orderBy: { ts: "desc" } }),
+      prisma.expense.findMany({ where: { accountId }, orderBy: { date: "desc" } }),
+      prisma.agreement.findMany({
+        where: { tenant: { accountId } },
+        include: { tenant: { select: { name: true } } },
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.room.findMany({ where: { accountId }, include: { floor: true }, orderBy: { number: "asc" } }),
+      prisma.reminder.findMany({ where: { accountId }, include: { tenant: { select: { name: true } } }, orderBy: { dueDate: "desc" } }),
+      prisma.activityLog.findMany({ where: { accountId }, orderBy: { ts: "desc" } }),
     ]);
 
   return {

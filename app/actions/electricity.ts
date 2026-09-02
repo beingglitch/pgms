@@ -3,12 +3,14 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "./activity";
+import { requireAccountId } from "./auth";
 import { getPgInfo } from "./settings";
 import { billRoomElectricity } from "./charges";
 import { round2 } from "@/lib/charges";
 
 /** The last *closed* reading, to seed a new reading's starting value. An open one has no end number to seed from. */
 export async function getLastReading(opts: { roomId?: string; tenantId?: string } = {}) {
+  const accountId = await requireAccountId();
   const scope = opts.roomId
     ? { roomId: opts.roomId }
     : opts.tenantId
@@ -16,7 +18,7 @@ export async function getLastReading(opts: { roomId?: string; tenantId?: string 
       : { isMainMeter: true };
 
   return prisma.electricityBill.findFirst({
-    where: { ...scope, endDate: { not: null } },
+    where: { ...scope, accountId, endDate: { not: null } },
     orderBy: { endDate: "desc" },
   });
 }
@@ -35,6 +37,9 @@ export async function startElectricityReading(
   actor: string,
   input: { roomId: string; startReading: number; startDate: string; ratePerUnit: number; photoUrl?: string }
 ) {
+  const accountId = await requireAccountId();
+  await prisma.room.findFirstOrThrow({ where: { id: input.roomId, accountId } });
+
   const existing = await prisma.electricityBill.findFirst({
     where: { roomId: input.roomId, endDate: null },
     select: { id: true },
@@ -43,6 +48,7 @@ export async function startElectricityReading(
 
   const bill = await prisma.electricityBill.create({
     data: {
+      accountId,
       roomId: input.roomId,
       startReading: input.startReading,
       startDate: new Date(input.startDate),
@@ -53,15 +59,16 @@ export async function startElectricityReading(
     include: { room: { select: { number: true } } },
   });
 
-  await logActivity(actor, "Meter reading started", `Room ${bill.room?.number} · starting at ${input.startReading}`);
+  await logActivity(accountId, actor, "Meter reading started", `Room ${bill.room?.number} · starting at ${input.startReading}`);
   revalidatePath("/rooms");
   return bill;
 }
 
 /** The room's in-progress reading, if it has one: what the Dues close-out flow needs to show. */
 export async function getOpenReadingForRoom(roomId: string) {
+  const accountId = await requireAccountId();
   return prisma.electricityBill.findFirst({
-    where: { roomId, endDate: null },
+    where: { roomId, accountId, endDate: null },
     orderBy: { createdAt: "desc" },
   });
 }
@@ -72,14 +79,15 @@ export async function getOpenReadingForRoom(roomId: string) {
  * closed and billed is history, not something a reset undoes.
  */
 export async function resetElectricityReading(actor: string, roomId: string) {
+  const accountId = await requireAccountId();
   const open = await prisma.electricityBill.findFirst({
-    where: { roomId, endDate: null },
+    where: { roomId, accountId, endDate: null },
     include: { room: { select: { number: true } } },
   });
   if (!open) return null;
 
   await prisma.electricityBill.delete({ where: { id: open.id } });
-  await logActivity(actor, "Meter reading reset", `Room ${open.room?.number ?? roomId}`);
+  await logActivity(accountId, actor, "Meter reading reset", `Room ${open.room?.number ?? roomId}`);
   revalidatePath("/rooms");
   return open;
 }
@@ -106,7 +114,11 @@ export async function resetElectricityIfRoomEmpty(actor: string, roomId: string)
  * onboarding-only. "Continuous" is the point, not "restart every time".
  */
 export async function closeElectricityReading(actor: string, billId: string, endReading: number, endDate: string) {
-  const bill = await prisma.electricityBill.findUnique({ where: { id: billId }, include: { room: { select: { number: true } } } });
+  const accountId = await requireAccountId();
+  const bill = await prisma.electricityBill.findFirst({
+    where: { id: billId, accountId },
+    include: { room: { select: { number: true } } },
+  });
   if (!bill || bill.endDate) return null;
 
   const units = round2(endReading - Number(bill.startReading));
@@ -118,12 +130,13 @@ export async function closeElectricityReading(actor: string, billId: string, end
     data: { endReading, endDate: new Date(endDate), units, amount },
   });
 
-  const result = await billRoomElectricity(actor, billId);
+  const result = await billRoomElectricity(accountId, actor, billId);
 
   if (bill.roomId) {
     const pgInfo = await getPgInfo();
     await prisma.electricityBill.create({
       data: {
+        accountId,
         roomId: bill.roomId,
         startReading: endReading,
         startDate: new Date(endDate),
@@ -134,6 +147,7 @@ export async function closeElectricityReading(actor: string, billId: string, end
   }
 
   await logActivity(
+    accountId,
     actor,
     "Electricity reading closed",
     `Room ${bill.room?.number} · ${units} units · ₹${amount}`
@@ -152,10 +166,11 @@ export async function closeElectricityReading(actor: string, billId: string, end
  * there's no open reading yet (the room's very first bill).
  */
 export async function getRoomElectricityContext(roomId: string) {
+  const accountId = await requireAccountId();
   const [openReading, occupants, pgInfo] = await Promise.all([
-    prisma.electricityBill.findFirst({ where: { roomId, endDate: null } }),
+    prisma.electricityBill.findFirst({ where: { roomId, accountId, endDate: null } }),
     prisma.tenant.findMany({
-      where: { roomId, status: "ACTIVE" },
+      where: { roomId, accountId, status: "ACTIVE" },
       orderBy: { name: "asc" },
       select: { id: true, name: true, joinDate: true },
     }),
@@ -176,7 +191,10 @@ export async function recordElectricityCharge(
   actor: string,
   input: { roomId: string; startReading: number; endReading: number; startDate?: string; dueDate: string }
 ) {
-  let bill = await prisma.electricityBill.findFirst({ where: { roomId: input.roomId, endDate: null } });
+  const accountId = await requireAccountId();
+  await prisma.room.findFirstOrThrow({ where: { id: input.roomId, accountId } });
+
+  let bill = await prisma.electricityBill.findFirst({ where: { roomId: input.roomId, accountId, endDate: null } });
 
   if (bill) {
     if (Number(bill.startReading) !== input.startReading) {
@@ -189,6 +207,7 @@ export async function recordElectricityCharge(
     const pgInfo = await getPgInfo();
     bill = await prisma.electricityBill.create({
       data: {
+        accountId,
         roomId: input.roomId,
         startReading: input.startReading,
         startDate: new Date(input.startDate ?? input.dueDate),
@@ -207,20 +226,24 @@ export async function recordElectricityCharge(
  */
 /** Replace or remove (url = null) a meter reading's proof photo from the image viewer. */
 export async function setMeterPhoto(actor: string, billId: string, url: string | null) {
+  const accountId = await requireAccountId();
+  await prisma.electricityBill.findFirstOrThrow({ where: { id: billId, accountId } });
   const bill = await prisma.electricityBill.update({
     where: { id: billId },
     data: { photoUrl: url },
     include: { room: { select: { number: true, tenants: { where: { status: "ACTIVE" }, select: { id: true } } } } },
   });
-  await logActivity(actor, url ? "Meter photo changed" : "Meter photo removed", bill.room ? `Room ${bill.room.number}` : "");
+  await logActivity(accountId, actor, url ? "Meter photo changed" : "Meter photo removed", bill.room ? `Room ${bill.room.number}` : "");
   revalidatePath("/rooms");
   for (const t of bill.room?.tenants ?? []) revalidatePath(`/tenants/${t.id}`);
   if (bill.tenantId) revalidatePath(`/tenants/${bill.tenantId}`);
 }
 
 export async function deleteElectricityBill(actor: string, id: string, tenantId?: string) {
+  const accountId = await requireAccountId();
+  await prisma.electricityBill.findFirstOrThrow({ where: { id, accountId } });
   await prisma.electricityBill.delete({ where: { id } });
-  await logActivity(actor, "Electricity reading deleted", id);
+  await logActivity(accountId, actor, "Electricity reading deleted", id);
 
   revalidatePath("/expenses");
   revalidatePath("/ledger");

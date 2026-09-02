@@ -1,15 +1,14 @@
 import type { MetadataRoute } from "next";
-import { getPgInfo } from "@/app/actions/settings";
 
-export const dynamic = "force-dynamic";
-
-export default async function manifest(): Promise<MetadataRoute.Manifest> {
-  const pgInfo = await getPgInfo();
-
+// Browsers fetch this regardless of sign-in state, so - like the root
+// layout's metadata - it can't depend on one account's PG name now that
+// there can be many. Generic branding; the signed-in app shell shows the
+// real property name and logo.
+export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: pgInfo.name,
-    short_name: pgInfo.shortName || pgInfo.name,
-    description: `Tenant, ledger, and expense management for ${pgInfo.name}`,
+    name: "My PG",
+    short_name: "My PG",
+    description: "Tenant, ledger, and expense management",
     start_url: "/",
     display: "standalone",
     background_color: "#F4EFE3",

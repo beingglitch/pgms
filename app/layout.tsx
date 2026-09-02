@@ -2,19 +2,20 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { ScrollbarActivity } from "@/components/scrollbar-activity";
-import { getPgInfo } from "@/app/actions/settings";
 
 export const dynamic = "force-dynamic";
 
-export async function generateMetadata(): Promise<Metadata> {
-  const pgInfo = await getPgInfo();
-  return {
-    title: pgInfo.name,
-    description: `Tenant, ledger, and expense management for ${pgInfo.name}`,
-    manifest: "/manifest.webmanifest",
-    appleWebApp: { capable: true, statusBarStyle: "default", title: pgInfo.name },
-  };
-}
+// Generic, account-agnostic metadata: this layout also wraps /login and
+// /signup, which render before any account is known, so it can't depend on
+// one account's PG name the way it used to when there was only ever one.
+// The signed-in app shell (app/(app)/layout.tsx) shows the real property
+// name and logo in its own nav once there's a session to read it from.
+export const metadata: Metadata = {
+  title: "My PG",
+  description: "Tenant, ledger, and expense management",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: { capable: true, statusBarStyle: "default", title: "My PG" },
+};
 
 export const viewport: Viewport = {
   themeColor: "#FDFBF7",

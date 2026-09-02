@@ -8,6 +8,7 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "./activity";
+import { requireAccountId } from "./auth";
 
 const SENT_ACTION = "Dues reminder sent";
 
@@ -22,7 +23,9 @@ export async function recordReminderSent(
   actor: string,
   input: { tenantId: string; tenantName: string; channel: "whatsapp" | "email"; amount: number }
 ) {
+  const accountId = await requireAccountId();
   await logActivity(
+    accountId,
     actor,
     SENT_ACTION,
     `${input.tenantName} · ₹${input.amount} · ${input.channel === "whatsapp" ? "WhatsApp" : "email"} · ${input.tenantId}`
@@ -33,8 +36,9 @@ export async function recordReminderSent(
 
 /** When each tenant was last chased, newest first. */
 export async function getReminderHistory(limit = 40) {
+  const accountId = await requireAccountId();
   const logs = await prisma.activityLog.findMany({
-    where: { action: SENT_ACTION },
+    where: { accountId, action: SENT_ACTION },
     orderBy: { ts: "desc" },
     take: limit,
   });

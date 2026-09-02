@@ -12,13 +12,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 
-/** The five things the owner does daily. Everything else lives in the menu. */
+/** The five things the owner does daily. Everything else lives in the menu.
+ * Each carries its own accent colour, so the active tab reads as "which
+ * area" at a glance rather than one repeated brand hue. */
 const primaryNav = [
-  { href: "/", label: "Home", icon: Home },
-  { href: "/tenants", label: "Tenants", icon: Users },
-  { href: "/ledger", label: "Ledger", icon: BookOpen },
-  { href: "/reminders", label: "Remind", icon: BellRing },
-  { href: "/expenses", label: "Spend", icon: Wallet },
+  { href: "/", label: "Home", icon: Home, color: "text-chip-blue-foreground" },
+  { href: "/tenants", label: "Tenants", icon: Users, color: "text-chip-purple-foreground" },
+  { href: "/ledger", label: "Ledger", icon: BookOpen, color: "text-chip-green-foreground" },
+  { href: "/reminders", label: "Remind", icon: BellRing, color: "text-chip-orange-foreground" },
+  { href: "/expenses", label: "Spend", icon: Wallet, color: "text-chip-pink-foreground" },
 ];
 
 export function Nav({ pgName, shortName, logoUrl }: { pgName: string; shortName: string; logoUrl?: string | null }) {
@@ -137,7 +139,7 @@ export function Nav({ pgName, shortName, logoUrl }: { pgName: string; shortName:
                 href={item.href}
                 aria-current={active ? "page" : undefined}
                 className={`flex flex-1 flex-col items-center gap-1 py-2.5 text-[10px] font-semibold transition-colors ${
-                  active ? "text-primary" : "text-muted-foreground"
+                  active ? item.color : "text-muted-foreground"
                 }`}
               >
                 <Icon className="h-5 w-5" strokeWidth={active ? 2.4 : 1.8} />
@@ -151,7 +153,7 @@ export function Nav({ pgName, shortName, logoUrl }: { pgName: string; shortName:
       {/* On wider screens the same destinations sit inline under the header. */}
       <div className="hidden border-b border-border/70 bg-canvas/85 backdrop-blur-md sm:sticky sm:top-[57px] sm:z-30 sm:block">
         <div className="mx-auto flex w-full max-w-5xl gap-1 px-6">
-          {[...primaryNav, { href: "/rooms", label: "Rooms", icon: DoorOpen }].map((item) => {
+          {[...primaryNav, { href: "/rooms", label: "Rooms", icon: DoorOpen, color: "text-chip-orange-foreground" }].map((item) => {
             const Icon = item.icon;
             const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
             return (
@@ -161,7 +163,7 @@ export function Nav({ pgName, shortName, logoUrl }: { pgName: string; shortName:
                 aria-current={active ? "page" : undefined}
                 className={`flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-semibold transition-colors ${
                   active
-                    ? "border-primary text-primary"
+                    ? `border-current ${item.color}`
                     : "border-transparent text-muted-foreground hover:text-foreground"
                 }`}
               >

@@ -96,6 +96,20 @@
   --color-marigold-foreground: var(--marigold-foreground);
   --color-positive: var(--positive);
 
+  /* Five accent hues used to tell feature areas apart at a glance - a
+     coloured chip per stat tile, nav icon, and empty state rather than one
+     flat brand colour repeated everywhere. */
+  --color-chip-blue: var(--chip-blue);
+  --color-chip-blue-foreground: var(--chip-blue-foreground);
+  --color-chip-purple: var(--chip-purple);
+  --color-chip-purple-foreground: var(--chip-purple-foreground);
+  --color-chip-green: var(--chip-green);
+  --color-chip-green-foreground: var(--chip-green-foreground);
+  --color-chip-orange: var(--chip-orange);
+  --color-chip-orange-foreground: var(--chip-orange-foreground);
+  --color-chip-pink: var(--chip-pink);
+  --color-chip-pink-foreground: var(--chip-pink-foreground);
+
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -136,107 +150,136 @@
 }
 
 :root {
-  --radius: 0.625rem;
+  --radius: 0.875rem;
 
-  /* Cool paper, not cream — the page a ledger is printed on. */
-  --canvas: #f6f6f3;
+  /* Bright, cool white — the whole app's base changed from a cream ledger
+     page to a crisp SaaS canvas as part of the colourful re-theme. */
+  --canvas: #f5f7fc;
   --background: #ffffff;
-  --foreground: #16233a; /* indigo-black ledger ink */
+  --foreground: #1a2138;
 
   --card: #ffffff;
-  --card-foreground: #16233a;
+  --card-foreground: #1a2138;
   --popover: #ffffff;
-  --popover-foreground: #16233a;
+  --popover-foreground: #1a2138;
 
-  /* Deep pine — the colour of the cloth these books are bound in. */
-  --primary: #1e4d45;
-  --primary-foreground: #f7faf8;
+  /* Vivid indigo-blue, the app's one brand colour, carried by every primary
+     button (as a blue-to-purple gradient, see buttonVariants) and every
+     active nav state. */
+  --primary: #3b5bfd;
+  --primary-foreground: #ffffff;
 
-  --secondary: #eef0ec;
-  --secondary-foreground: #1e4d45;
+  --secondary: #eef1ff;
+  --secondary-foreground: #3b5bfd;
 
-  --muted: #f1f2ee;
-  --muted-foreground: #66708a;
+  --muted: #f1f3fb;
+  --muted-foreground: #5b6478;
 
-  --accent: #e8ede9;
-  --accent-foreground: #1e4d45;
+  --accent: #e9edff;
+  --accent-foreground: #3b5bfd;
 
   /* Red ink: what is owed, and only what is owed. */
-  --destructive: #b93a32;
-  --destructive-foreground: #fdf6f5;
-  --ledger: #b93a32;
-  --ledger-foreground: #fdf6f5;
+  --destructive: #e53e3e;
+  --destructive-foreground: #fef6f6;
+  --ledger: #e53e3e;
+  --ledger-foreground: #fef6f6;
 
   /* Marigold marks money held rather than earned — deposits, mainly. The
      -foreground pair is darkened to stay legible as text on white. */
-  --marigold: #d9932b;
-  --marigold-foreground: #7d5210;
+  --marigold: #f59e0b;
+  --marigold-foreground: #92610a;
 
-  --positive: #2c7a5b;
+  --positive: #16a34a;
 
-  --border: #e3e4de;
-  --input: #d9dbd4;
-  --ring: #1e4d45;
+  --border: #e3e7f3;
+  --input: #d7dceb;
+  --ring: #3b5bfd;
 
-  /* Chart marks are their own steps, not the UI inks — the ink colours are too
-     dark and too grey to survive as fills. This set passes the lightness band,
-     chroma floor, all-pairs CVD separation and 3:1 contrast on white. */
-  --chart-rent: #0b8d7b;
-  --chart-power: #c2410c;
-  --chart-other: #7b3fc4;
-  --chart-1: #0b8d7b;
-  --chart-2: #c2410c;
-  --chart-3: #7b3fc4;
-  --chart-4: #3b82c4;
-  --chart-5: #8a7bb0;
+  /* One chip colour per feature area — nav icons, stat tiles, empty states —
+     so different parts of the app read as visually distinct at a glance
+     instead of one repeated brand hue. */
+  --chip-blue: #eaf1ff;
+  --chip-blue-foreground: #2563eb;
+  --chip-purple: #f4f0ff;
+  --chip-purple-foreground: #7c3aed;
+  --chip-green: #eafbf1;
+  --chip-green-foreground: #16a34a;
+  --chip-orange: #fff3e8;
+  --chip-orange-foreground: #ea580c;
+  --chip-pink: #ffeff6;
+  --chip-pink-foreground: #db2777;
+
+  /* Chart marks reuse the chip palette above, restepped for line/bar fills:
+     each passes the lightness band, chroma floor, all-pairs CVD separation
+     and 3:1 contrast on white that the ledger inks alone couldn't. */
+  --chart-rent: #2f6fed;
+  --chart-power: #ea580c;
+  --chart-other: #7c3aed;
+  --chart-1: #2f6fed;
+  --chart-2: #ea580c;
+  --chart-3: #7c3aed;
+  --chart-4: #16a34a;
+  --chart-5: #db2777;
 }
 
 .dark {
-  --canvas: #12161d;
-  --background: #171c25;
-  --foreground: #eaecef;
+  --canvas: #11141d;
+  --background: #171b27;
+  --foreground: #e9ecf5;
 
-  --card: #1c222c;
-  --card-foreground: #eaecef;
-  --popover: #1c222c;
-  --popover-foreground: #eaecef;
+  --card: #1c2130;
+  --card-foreground: #e9ecf5;
+  --popover: #1c2130;
+  --popover-foreground: #e9ecf5;
 
-  --primary: #6fb3a3;
-  --primary-foreground: #0f1a17;
+  --primary: #7c93ff;
+  --primary-foreground: #0f1424;
 
-  --secondary: #262d38;
-  --secondary-foreground: #eaecef;
+  --secondary: #262d40;
+  --secondary-foreground: #b8c4ff;
 
-  --muted: #232a35;
-  --muted-foreground: #98a1b3;
+  --muted: #232a3a;
+  --muted-foreground: #99a2ba;
 
-  --accent: #262d38;
-  --accent-foreground: #eaecef;
+  --accent: #262d40;
+  --accent-foreground: #b8c4ff;
 
-  --destructive: #e0655c;
+  --destructive: #ef6a6a;
   --destructive-foreground: #1a0f0e;
-  --ledger: #e0655c;
+  --ledger: #ef6a6a;
   --ledger-foreground: #1a0f0e;
 
-  --marigold: #e8a94a;
-  --marigold-foreground: #f0c583;
+  --marigold: #f0b545;
+  --marigold-foreground: #f4cc80;
 
-  --positive: #5aa886;
+  --positive: #4ade80;
 
-  --border: #2c3441;
-  --input: #39424f;
-  --ring: #6fb3a3;
+  --border: #2c3346;
+  --input: #3a4258;
+  --ring: #7c93ff;
 
-  /* Re-stepped for the dark surface rather than flipped — same three hues,
-     re-validated against #1c222c. */
-  --chart-rent: #0f9e8f;
-  --chart-power: #e2691a;
-  --chart-other: #9b6ae0;
-  --chart-1: #0f9e8f;
-  --chart-2: #e2691a;
-  --chart-3: #9b6ae0;
-  --chart-4: #5a9cf5;
-  --chart-5: #a596cc;
+  /* Re-stepped for the dark card surface, same five chip hues. */
+  --chip-blue: #202c4d;
+  --chip-blue-foreground: #7ea3ff;
+  --chip-purple: #2b2447;
+  --chip-purple-foreground: #b795f9;
+  --chip-green: #1b3327;
+  --chip-green-foreground: #4ade80;
+  --chip-orange: #3a2717;
+  --chip-orange-foreground: #f0995a;
+  --chip-pink: #3a1e2c;
+  --chip-pink-foreground: #f28cbb;
+
+  /* Re-stepped for the dark surface rather than flipped — same five hues,
+     re-validated against #1c2130. */
+  --chart-rent: #7ea3ff;
+  --chart-power: #f0995a;
+  --chart-other: #b795f9;
+  --chart-1: #7ea3ff;
+  --chart-2: #f0995a;
+  --chart-3: #b795f9;
+  --chart-4: #4ade80;
+  --chart-5: #f28cbb;
 }
 
 @layer base {

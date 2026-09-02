@@ -50,8 +50,13 @@ enum ChargeType {
   OTHER
 }
 
-model PgInfo {
-  id                     String  @id @default("singleton")
+/// One PG owner's business: the tenant root everything else hangs off of.
+/// Was a disguised singleton (`id: "singleton"`, one shared password) before
+/// the app went multi-tenant; now a normal row per signup, keyed by email.
+model Account {
+  id                     String  @id @default(cuid())
+  /// Login identifier.
+  email                  String  @unique
   name                   String  @default("My PG")
   shortName              String  @default("PG")
   logoUrl                String?
@@ -71,23 +76,39 @@ model PgInfo {
   /// dashboard's "collected this year" figure. India's FY runs April to
   /// March, hence the default of 4.
   fiscalYearStartMonth Int   @default(4)
-  /// scrypt hash of the owner's password. Empty until first setup.
-  passwordHash     String    @default("")
+  /// scrypt hash of the owner's password.
+  passwordHash     String
+  createdAt        DateTime  @default(now())
+
+  floors            Floor[]
+  rooms             Room[]
+  tenants           Tenant[]
+  charges           Charge[]
+  ledgerEntries     LedgerEntry[]
+  electricityBills  ElectricityBill[]
+  expenses          Expense[]
+  reminders         Reminder[]
+  activityLogs      ActivityLog[]
 }
 
 model Floor {
   id        String     @id @default(cuid())
+  account   Account    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId String
   name      String
   order     Int        @default(0)
   rooms     Room[]
   createdAt DateTime   @default(now())
 
-  @@unique([name])
+  @@unique([accountId, name])
+  @@index([accountId])
 }
 
 model Room {
-  id      String @id @default(cuid())
-  floor   Floor  @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  id        String  @id @default(cuid())
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId String
+  floor     Floor   @relation(fields: [floorId], references: [id], onDelete: Cascade)
   floorId String
   number  String
   /// Number of beds: 1 single, 2 double, 3 triple, and so on.
@@ -102,10 +123,13 @@ model Room {
   meterReadings ElectricityBill[]
 
   @@unique([floorId, number])
+  @@index([accountId])
 }
 
 model Tenant {
-  id         String @id @default(cuid())
+  id        String  @id @default(cuid())
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId String
   name       String
   phone      String
   email      String?
@@ -172,12 +196,15 @@ model Tenant {
 
   @@index([status])
   @@index([roomId])
+  @@index([accountId])
 }
 
 /// Something the tenant owes. Payments are matched to charges through
 /// Allocation, so a charge can be partly paid and the shortfall stays visible.
 model Charge {
   id          String     @id @default(cuid())
+  account     Account    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId   String
   tenant      Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tenantId    String
   type        ChargeType
@@ -208,6 +235,7 @@ model Charge {
   @@index([tenantId, period])
   @@index([dueDate])
   @@index([type])
+  @@index([accountId])
 }
 
 /// Links money received to the charge it settles. One payment can be spread
@@ -249,6 +277,8 @@ model Agreement {
 
 model LedgerEntry {
   id         String      @id @default(cuid())
+  account    Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId  String
   tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tenantId   String
   type       LedgerType
@@ -256,19 +286,24 @@ model LedgerEntry {
   date       DateTime
   mode       PaymentMode @default(UPI)
   note       String?
-  /// Sequential receipt number, e.g. "R-202608-0004".
-  receiptNo  String?     @unique
+  /// Sequential receipt number, e.g. "R-202608-0004". Unique per account -
+  /// two properties both number their own receipts from R-...-0001.
+  receiptNo  String?
   recordedBy String?
   createdAt  DateTime    @default(now())
 
   allocations Allocation[]
 
+  @@unique([accountId, receiptNo])
   @@index([tenantId])
   @@index([date])
+  @@index([accountId])
 }
 
 model ElectricityBill {
   id           String   @id @default(cuid())
+  account      Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId    String
   /// Room the sub-meter belongs to. A room meter is read once and split across
   /// whoever is living there, so readings hang off the room, not a tenant.
   room         Room?    @relation(fields: [roomId], references: [id], onDelete: Cascade)
@@ -303,6 +338,7 @@ model ElectricityBill {
   @@index([roomId])
   @@index([isMainMeter])
   @@index([endDate])
+  @@index([accountId])
 }
 
 model CheckoutDeduction {
@@ -319,6 +355,8 @@ model CheckoutDeduction {
 
 model Expense {
   id         String           @id @default(cuid())
+  account    Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId  String
   title      String
   category   String
   amount     Decimal          @db.Decimal(10, 2)
@@ -335,6 +373,7 @@ model Expense {
   sourceBill   ElectricityBill? @relation(fields: [sourceBillId], references: [id], onDelete: Cascade)
   sourceBillId String?
 
+  @@index([accountId])
   @@index([frequency])
   @@index([date])
   @@index([sourceBillId])
@@ -342,6 +381,8 @@ model Expense {
 
 model Reminder {
   id        String         @id @default(cuid())
+  account   Account        @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId String
   tenant    Tenant?        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tenantId  String?
   type      ReminderType   @default(RENT)
@@ -355,12 +396,17 @@ model Reminder {
 
   @@index([tenantId])
   @@index([status])
+  @@index([accountId])
 }
 
 model ActivityLog {
-  id     String   @id @default(cuid())
+  id        String   @id @default(cuid())
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId String
   actor  String
   action String
   detail String?
   ts     DateTime @default(now())
+
+  @@index([accountId])
 }

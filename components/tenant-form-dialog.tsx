@@ -686,12 +686,6 @@ export function TenantFormDialog({
               {isNew ? "Onboard tenant" : "Save changes"}
             </Button>
           </div>
-          {isNew && (
-            <p className="text-center text-xs text-muted-foreground">
-              This whole form is the onboarding agreement. Editable later from the tenant&apos;s profile, in place,
-              no versioning.
-            </p>
-          )}
         </div>
         )}
       </DialogContent>

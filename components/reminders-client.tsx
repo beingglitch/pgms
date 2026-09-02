@@ -6,7 +6,7 @@ import Link from "next/link";
 import { ZoomableAvatar } from "@/components/image-viewer";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CheckCircle2, MessageCircle, Search, Send } from "lucide-react";
+import { BellRing, CheckCircle2, MessageCircle, Search, Send } from "lucide-react";
 import { SendDuesReminderDialog } from "@/components/send-dues-reminder-dialog";
 import { Amount, EmptyState, KhataRow, PageTitle, Panel, SectionHeading, StatTile } from "@/components/khata";
 import { getReminderHistory } from "@/app/actions/reminders";
@@ -104,7 +104,7 @@ export function RemindersClient({
         </Panel>
       )}
 
-      <StatTile label="To chase" value={dues.length} tone={dues.length ? "owed" : "positive"} hint={inr(totalToChase)} />
+      <StatTile label="To chase" icon={BellRing} chip="orange" value={dues.length} tone={dues.length ? "owed" : "positive"} hint={inr(totalToChase)} />
 
       <Tabs defaultValue="chase">
         <TabsList className="w-full">
@@ -118,7 +118,7 @@ export function RemindersClient({
 
         <TabsContent value="chase" className="mt-4 space-y-3">
           {dues.length === 0 ? (
-            <EmptyState icon={CheckCircle2} title="Nobody to chase">
+            <EmptyState icon={CheckCircle2} chip="green" title="Nobody to chase">
               Everyone has paid up. This list fills itself from outstanding charges.
             </EmptyState>
           ) : (

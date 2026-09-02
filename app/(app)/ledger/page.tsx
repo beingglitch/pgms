@@ -1,8 +1,9 @@
 import { listLedger } from "@/app/actions/ledger";
-import { listOutstandingByTenant } from "@/app/actions/charges";
+import { listAllCharges, listOutstandingByTenant } from "@/app/actions/charges";
 import { listExpenses } from "@/app/actions/expenses";
 import { listSecurityDeposits } from "@/app/actions/reports";
 import { getPgInfo } from "@/app/actions/settings";
+import { requireAccountId } from "@/app/actions/auth";
 import { prisma } from "@/lib/prisma";
 import { num } from "@/lib/charges";
 import { serialise } from "@/lib/serialize";
@@ -15,14 +16,16 @@ export default async function LedgerPage({
 }: {
   searchParams: Promise<{ tab?: string; filter?: string; month?: string }>;
 }) {
-  const [entries, rawExpenses, deposits, rawDues, tenants, pgInfo, params] = await Promise.all([
+  const accountId = await requireAccountId();
+  const [entries, rawExpenses, deposits, rawDues, rawCharges, tenants, pgInfo, params] = await Promise.all([
     listLedger(),
     listExpenses(),
     listSecurityDeposits(),
     listOutstandingByTenant(),
+    listAllCharges(),
     prisma.tenant
       .findMany({
-        where: { status: "ACTIVE" },
+        where: { accountId, status: "ACTIVE" },
         orderBy: { name: "asc" },
         select: {
           id: true,
@@ -48,16 +51,19 @@ export default async function LedgerPage({
       expenses={serialise(rawExpenses)}
       deposits={deposits}
       dues={serialise(rawDues)}
+      charges={serialise(rawCharges)}
       tenants={tenants}
       dueSoonDays={pgInfo.dueSoonDays}
       initialTab={
-        params.month
-          ? "payments"
+        params.tab === "billed"
+          ? "billed"
           : params.tab === "payments"
             ? "payments"
             : params.tab === "security"
               ? "security"
-              : "dues"
+              : params.month
+                ? "payments"
+                : "dues"
       }
       initialDuesFilter={params.filter === "upcoming" ? "upcoming" : params.filter === "current" ? "current" : "all"}
       initialMonth={params.month}

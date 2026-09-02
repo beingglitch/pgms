@@ -35,25 +35,36 @@ export function verifyPassword(password: string, stored: string) {
   return safeEqual(scryptSync(password, salt, 64).toString("hex"), key);
 }
 
-export function createSessionToken() {
+/// The token carries the account id, not just a boolean "someone's signed
+/// in" - multi-tenant, every request needs to know *which* account. Signed
+/// so it can't be forged without the server secret, same as before.
+export function createSessionToken(accountId: string) {
   const expiry = String(Date.now() + SESSION_MAX_AGE * 1000);
-  return `${expiry}.${sign(expiry)}`;
+  const payload = `${accountId}.${expiry}`;
+  return `${payload}.${sign(payload)}`;
 }
 
-export function verifySessionToken(token: string | undefined | null) {
-  const [expiry, signature] = (token || "").split(".");
-  if (!expiry || !signature) return false;
-  if (!safeEqual(signature, sign(expiry))) return false;
-  return Number(expiry) > Date.now();
+/// Returns the signed-in account's id, or null if the token is missing,
+/// malformed, forged, or expired.
+export function verifySessionToken(token: string | undefined | null): string | null {
+  const parts = (token || "").split(".");
+  if (parts.length !== 3) return null;
+  const [accountId, expiry, signature] = parts;
+  if (!accountId || !expiry || !signature) return null;
+  if (!safeEqual(signature, sign(`${accountId}.${expiry}`))) return null;
+  if (Number(expiry) <= Date.now()) return null;
+  return accountId;
 }
 
-/// A separate escape hatch from the password itself: whoever manages the
-/// hosting (Vercel project settings) sets DEVELOPER_RECOVERY_CODE, and can
-/// hand it to the owner to reset a forgotten password without needing the
-/// old one. Unset by default, so recovery is opt-in rather than a standing
-/// backdoor on every deployment.
+/// A separate escape hatch from the password itself, in place of an emailed
+/// OTP (no email provider is set up): whoever manages the hosting sets a
+/// 6-digit DEVELOPER_RECOVERY_CODE, and can hand it to an account holder to
+/// reset a forgotten password without needing the old one. Unset by
+/// default, so recovery is opt-in rather than a standing backdoor on every
+/// deployment.
 export function verifyRecoveryCode(code: string) {
   const configured = process.env.DEVELOPER_RECOVERY_CODE;
-  if (!configured) return false;
+  if (!configured || !/^\d{6}$/.test(configured)) return false;
+  if (!/^\d{6}$/.test(code)) return false;
   return safeEqual(code, configured);
 }

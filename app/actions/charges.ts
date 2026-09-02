@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "./activity";
+import { requireAccountId } from "./auth";
 import {
   CHARGE_TYPE_LABELS,
   chargeOutstanding,
@@ -20,7 +21,6 @@ import {
   type Money,
   type RoomForSplit,
 } from "@/lib/charges";
-import { getPgInfo } from "./settings";
 import type { ChargeType } from "@/lib/generated/prisma/enums";
 
 const CHARGES_WITH_PAYMENTS = {
@@ -36,17 +36,44 @@ function revalidateMoneyViews(tenantId?: string) {
 
 /** Every charge for a tenant, newest first, with what has been paid against it. */
 export async function listChargesForTenant(tenantId: string) {
+  const accountId = await requireAccountId();
   return prisma.charge.findMany({
-    where: { tenantId },
+    where: { tenantId, accountId },
     orderBy: [{ dueDate: "desc" }, { createdAt: "desc" }],
     include: CHARGES_WITH_PAYMENTS,
   });
 }
 
+/**
+ * Every charge ever raised, whoever it's for and whether or not it's been
+ * paid - the full billing register behind "of ₹X billed", so it can be
+ * browsed by month or by tenant rather than just taken on faith.
+ */
+export async function listAllCharges() {
+  const accountId = await requireAccountId();
+  return prisma.charge.findMany({
+    where: { accountId },
+    orderBy: [{ period: "desc" }, { dueDate: "desc" }],
+    include: {
+      ...CHARGES_WITH_PAYMENTS,
+      tenant: {
+        select: {
+          id: true,
+          name: true,
+          photoUrl: true,
+          roomNumber: true,
+          room: { select: { number: true, floor: { select: { name: true } } } },
+        },
+      },
+    },
+  });
+}
+
 /** Everyone who owes something, with their charges: the Dues tab. */
 export async function listOutstandingByTenant() {
+  const accountId = await requireAccountId();
   const tenants = await prisma.tenant.findMany({
-    where: { status: "ACTIVE" },
+    where: { accountId, status: "ACTIVE" },
     orderBy: { name: "asc" },
     include: {
       room: { select: { id: true, number: true, floor: { select: { name: true } } } },
@@ -97,36 +124,40 @@ function buildPendingRentChargeRows(
 
 /**
  * Create every rent charge that's due (or due within the Settings lead
- * window) and doesn't exist yet, for every active tenant. Rent is a calendar
- * month: the join month pro-rated from the day after arrival, every month
- * after that in full and due on the 1st, put on the books `dueLeadDays`
- * (Settings, default 7) before it.
+ * window) and doesn't exist yet, for every active tenant of one account.
+ * Rent is a calendar month: the join month pro-rated from the day after
+ * arrival, every month after that in full and due on the 1st, put on the
+ * books `dueLeadDays` (Settings, default 7) before it.
  *
- * Runs from the daily cron, from every onboarding (for everyone, not just
- * the newcomer), and on each dashboard load. Safe to run repeatedly,
- * including concurrently: the partial unique index on (tenantId, period)
- * for RENT means a month already billed is skipped via skipDuplicates
- * rather than double-billed. Pass `revalidate: false` when calling during a
- * render, where revalidatePath isn't allowed.
+ * Takes `accountId` explicitly rather than resolving it from the session,
+ * since the daily cron calls this once per account with no session of its
+ * own to read. Safe to run repeatedly, including concurrently: the partial
+ * unique index on (tenantId, period) for RENT means a month already billed
+ * is skipped via skipDuplicates rather than double-billed. Pass
+ * `revalidate: false` when calling during a render, where revalidatePath
+ * isn't allowed.
  */
 export async function generateDueRentCharges(
+  accountId: string,
   actor: string,
   opts: { asOf?: Date; revalidate?: boolean } = {}
 ) {
   const asOf = opts.asOf ?? new Date();
   const [tenants, pgInfo] = await Promise.all([
     prisma.tenant.findMany({
-      where: { status: "ACTIVE" },
+      where: { accountId, status: "ACTIVE" },
       include: {
         room: true,
         charges: { where: { type: "RENT" }, select: { period: true } },
       },
     }),
-    getPgInfo(),
+    prisma.account.findUniqueOrThrow({ where: { id: accountId }, select: { dueLeadDays: true } }),
   ]);
 
   const rows = tenants.flatMap((tenant) =>
-    buildPendingRentChargeRows(tenant, asOf, pgInfo.dueLeadDays, new Set(tenant.charges.map((c) => c.period)), actor)
+    buildPendingRentChargeRows(tenant, asOf, pgInfo.dueLeadDays, new Set(tenant.charges.map((c) => c.period)), actor).map(
+      (row) => ({ ...row, accountId })
+    )
   );
 
   if (rows.length === 0) return { created: 0 };
@@ -134,7 +165,7 @@ export async function generateDueRentCharges(
   const result = await prisma.charge.createMany({ data: rows, skipDuplicates: true });
   if (result.count > 0) {
     const tenantCount = new Set(rows.map((r) => r.tenantId)).size;
-    await logActivity(actor, "Rent charges generated", `${result.count} charge(s) across ${tenantCount} tenant(s)`);
+    await logActivity(accountId, actor, "Rent charges generated", `${result.count} charge(s) across ${tenantCount} tenant(s)`);
     if (opts.revalidate !== false) revalidateMoneyViews();
   }
 
@@ -147,9 +178,9 @@ export async function generateDueRentCharges(
  * The owner reads the meter once; whoever is living in the room at that moment
  * splits it. Shares are computed so they add back up to the bill exactly.
  */
-export async function billRoomElectricity(actor: string, billId: string) {
-  const bill = await prisma.electricityBill.findUnique({
-    where: { id: billId },
+export async function billRoomElectricity(accountId: string, actor: string, billId: string) {
+  const bill = await prisma.electricityBill.findFirst({
+    where: { id: billId, accountId },
     include: {
       room: { include: { tenants: { where: { status: "ACTIVE" }, orderBy: { name: "asc" } } } },
     },
@@ -171,7 +202,7 @@ export async function billRoomElectricity(actor: string, billId: string) {
   const occupants = bill.room
     ? bill.room.tenants
     : bill.tenantId
-      ? await prisma.tenant.findMany({ where: { id: bill.tenantId } })
+      ? await prisma.tenant.findMany({ where: { id: bill.tenantId, accountId } })
       : [];
 
   if (occupants.length === 0) return { created: 0 };
@@ -197,6 +228,7 @@ export async function billRoomElectricity(actor: string, billId: string) {
 
   await prisma.charge.createMany({
     data: billed.map((tenant, i) => ({
+      accountId,
       tenantId: tenant.id,
       type: "ELECTRICITY" as const,
       period,
@@ -212,6 +244,7 @@ export async function billRoomElectricity(actor: string, billId: string) {
   });
 
   await logActivity(
+    accountId,
     actor,
     "Electricity billed",
     `${roomLabel} · ${range} · ${units} units · ₹${Number(bill.amount)} across ${billed.length}`
@@ -225,8 +258,12 @@ export async function addManualCharge(
   actor: string,
   input: { tenantId: string; type: ChargeType; description: string; amount: number; dueDate: string }
 ) {
+  const accountId = await requireAccountId();
+  await prisma.tenant.findFirstOrThrow({ where: { id: input.tenantId, accountId } });
+
   const charge = await prisma.charge.create({
     data: {
+      accountId,
       tenantId: input.tenantId,
       type: input.type,
       period: periodOf(input.dueDate),
@@ -238,18 +275,20 @@ export async function addManualCharge(
     include: { tenant: { select: { name: true } } },
   });
 
-  await logActivity(actor, "Charge added", `${charge.tenant.name} · ${charge.description} · ₹${input.amount}`);
+  await logActivity(accountId, actor, "Charge added", `${charge.tenant.name} · ${charge.description} · ₹${input.amount}`);
   revalidateMoneyViews(input.tenantId);
   return charge;
 }
 
 export async function waiveCharge(actor: string, id: string, waived: boolean) {
+  const accountId = await requireAccountId();
+  await prisma.charge.findFirstOrThrow({ where: { id, accountId } });
   const charge = await prisma.charge.update({
     where: { id },
     data: { waived },
     include: { tenant: { select: { name: true } } },
   });
-  await logActivity(actor, waived ? "Charge waived" : "Waiver removed", `${charge.tenant.name} · ${charge.description}`);
+  await logActivity(accountId, actor, waived ? "Charge waived" : "Waiver removed", `${charge.tenant.name} · ${charge.description}`);
   revalidateMoneyViews(charge.tenantId);
 }
 
@@ -262,8 +301,9 @@ export async function waiveCharge(actor: string, id: string, waived: boolean) {
  * settled; waive or delete it if the whole thing should go away instead.
  */
 export async function adjustChargeAmount(actor: string, id: string, newAmount: number, note?: string) {
-  const charge = await prisma.charge.findUnique({
-    where: { id },
+  const accountId = await requireAccountId();
+  const charge = await prisma.charge.findFirst({
+    where: { id, accountId },
     include: { allocations: { select: { amount: true } }, tenant: { select: { name: true } } },
   });
   if (!charge) throw new Error("That charge no longer exists.");
@@ -277,6 +317,7 @@ export async function adjustChargeAmount(actor: string, id: string, newAmount: n
   await prisma.charge.update({ where: { id }, data: { amount: newAmount } });
 
   await logActivity(
+    accountId,
     actor,
     "Charge amount adjusted",
     `${charge.tenant.name} · ${charge.description} · ₹${oldAmount} → ₹${newAmount}${note ? ` (${note})` : ""}`
@@ -286,8 +327,10 @@ export async function adjustChargeAmount(actor: string, id: string, newAmount: n
 }
 
 export async function deleteCharge(actor: string, id: string) {
+  const accountId = await requireAccountId();
+  await prisma.charge.findFirstOrThrow({ where: { id, accountId } });
   const charge = await prisma.charge.delete({ where: { id } });
-  await logActivity(actor, "Charge deleted", charge.description);
+  await logActivity(accountId, actor, "Charge deleted", charge.description);
   revalidateMoneyViews(charge.tenantId);
 }
 
@@ -301,13 +344,14 @@ export async function deleteCharge(actor: string, id: string) {
  * disappearing.
  */
 export async function allocatePaymentToCharges(
+  accountId: string,
   ledgerEntryId: string,
   tenantId: string,
   amount: number,
   chargeId?: string
 ) {
   const open = await prisma.charge.findMany({
-    where: { tenantId, waived: false },
+    where: { tenantId, accountId, waived: false },
     orderBy: [{ dueDate: "asc" }, { createdAt: "asc" }],
     include: CHARGES_WITH_PAYMENTS,
   });
@@ -324,20 +368,20 @@ export async function allocatePaymentToCharges(
 }
 
 /** Rebuild every allocation for a tenant, used after a charge or payment is removed. */
-export async function reallocateTenant(tenantId: string) {
+export async function reallocateTenant(accountId: string, tenantId: string) {
   const [payments, charges] = await Promise.all([
     prisma.ledgerEntry.findMany({
-      where: { tenantId, type: { in: ["RENT", "OTHER"] } },
+      where: { tenantId, accountId, type: { in: ["RENT", "OTHER"] } },
       orderBy: { date: "asc" },
     }),
     prisma.charge.findMany({
-      where: { tenantId, waived: false },
+      where: { tenantId, accountId, waived: false },
       orderBy: [{ dueDate: "asc" }, { createdAt: "asc" }],
       include: CHARGES_WITH_PAYMENTS,
     }),
   ]);
 
-  await prisma.allocation.deleteMany({ where: { ledgerEntry: { tenantId } } });
+  await prisma.allocation.deleteMany({ where: { ledgerEntry: { tenantId, accountId } } });
 
   // Replay payments in date order against a running tally of what's owed.
   const running = charges.map((c) => ({ ...c, allocations: [] as { amount: number }[] }));
@@ -357,8 +401,9 @@ export async function reallocateTenant(tenantId: string) {
 
 /** What a tenant owes right now, split by type. Powers reminders and checkout. */
 export async function getTenantDues(tenantId: string) {
+  const accountId = await requireAccountId();
   const charges = await prisma.charge.findMany({
-    where: { tenantId },
+    where: { tenantId, accountId },
     orderBy: { dueDate: "asc" },
     include: CHARGES_WITH_PAYMENTS,
   });

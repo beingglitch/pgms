@@ -14,9 +14,9 @@ import { PhotoUpload } from "@/components/photo-upload";
 import { PageTitle, Panel } from "@/components/khata";
 import { useManager } from "@/lib/manager-context";
 import { toast } from "sonner";
-import type { PgInfoModel } from "@/lib/generated/prisma/models";
+import type { AccountModel } from "@/lib/generated/prisma/models";
 
-type PgInfo = Omit<PgInfoModel, "electricityRatePerUnit"> & { electricityRatePerUnit: number };
+type PgInfo = Omit<AccountModel, "electricityRatePerUnit"> & { electricityRatePerUnit: number };
 
 const MONTH_NAMES = [
   "January",

@@ -1,4 +1,3 @@
-import { getPgInfo } from "@/app/actions/settings";
 import { LoginClient } from "@/components/login-client";
 
 export const dynamic = "force-dynamic";
@@ -8,15 +7,7 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<{ next?: string }>;
 }) {
-  const [pgInfo, params] = await Promise.all([getPgInfo(), searchParams]);
+  const params = await searchParams;
 
-  return (
-    <LoginClient
-      pgName={pgInfo.name}
-      shortName={pgInfo.shortName}
-      logoUrl={pgInfo.logoUrl}
-      needsSetup={pgInfo.passwordHash === ""}
-      next={params.next}
-    />
-  );
+  return <LoginClient next={params.next} />;
 }

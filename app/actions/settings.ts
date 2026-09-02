@@ -3,11 +3,13 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "./activity";
+import { requireAccountId } from "./auth";
 
+/// The signed-in account's own settings row - always exists once signed in,
+/// created at signup, so no more auto-create-on-missing-row here.
 export async function getPgInfo() {
-  const info = await prisma.pgInfo.findUnique({ where: { id: "singleton" } });
-  if (info) return info;
-  return prisma.pgInfo.create({ data: { id: "singleton" } });
+  const accountId = await requireAccountId();
+  return prisma.account.findUniqueOrThrow({ where: { id: accountId } });
 }
 
 export async function updatePgInfo(
@@ -26,12 +28,9 @@ export async function updatePgInfo(
     fiscalYearStartMonth: number;
   }
 ) {
-  await prisma.pgInfo.upsert({
-    where: { id: "singleton" },
-    create: { id: "singleton", ...data },
-    update: data,
-  });
-  await logActivity(actor, "Property details updated", Object.keys(data).join(", "));
+  const accountId = await requireAccountId();
+  await prisma.account.update({ where: { id: accountId }, data });
+  await logActivity(accountId, actor, "Property details updated", Object.keys(data).join(", "));
   revalidatePath("/settings");
   revalidatePath("/rooms");
   revalidatePath("/ledger");
@@ -39,12 +38,9 @@ export async function updatePgInfo(
 }
 
 export async function updateOwnerName(name: string) {
+  const accountId = await requireAccountId();
   const trimmed = name.trim() || "Owner";
-  await prisma.pgInfo.upsert({
-    where: { id: "singleton" },
-    create: { id: "singleton", ownerName: trimmed },
-    update: { ownerName: trimmed },
-  });
+  await prisma.account.update({ where: { id: accountId }, data: { ownerName: trimmed } });
   revalidatePath("/settings");
   revalidatePath("/");
   return trimmed;

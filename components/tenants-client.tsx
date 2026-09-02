@@ -129,6 +129,7 @@ export function TenantsClient({
       {filtered.length === 0 && (
         <EmptyState
           icon={Users}
+          chip="purple"
           title={tenants.length === 0 ? "No tenants here" : "Nobody matches"}
           action={
             tenants.length === 0 ? (

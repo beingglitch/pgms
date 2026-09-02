@@ -6,12 +6,13 @@ import { getBilledByPeriod, getCollectionsByPeriod, getDepositLiability, getOccu
 import { generateDueRentCharges, listOutstandingByTenant } from "@/app/actions/charges";
 import { listActivity } from "@/app/actions/activity";
 import { getPgInfo } from "@/app/actions/settings";
+import { requireAccountId } from "@/app/actions/auth";
 import { DashboardChart, type MonthPoint } from "@/components/dashboard-chart";
 import { ChaseStrip, type ChaseRow } from "@/components/chase-strip";
 import { MonthSelect } from "@/components/month-select";
 import { inr, fmtDate, monthKey, todayISO, daysFromNowISO, dateISO } from "@/lib/format";
 import { bucketDuesAging, chargeOutstanding, fiscalYearOf, num, periodLabel, round2 } from "@/lib/charges";
-import { ChevronRight, Sparkles, Wallet } from "lucide-react";
+import { AlertTriangle, ChevronRight, DoorOpen, Sparkles, Wallet } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -20,11 +21,13 @@ export default async function DashboardPage({
 }: {
   searchParams: Promise<{ month?: string }>;
 }) {
+  const accountId = await requireAccountId();
+
   // Rent charges are created daily by the cron, but the owner opening the
   // app is the surest daily event there is, so catch up here too. Idempotent
   // and cheap when there's nothing to do; `revalidate: false` because this
   // is a render, where revalidatePath isn't allowed.
-  await generateDueRentCharges("System", { revalidate: false });
+  await generateDueRentCharges(accountId, "System", { revalidate: false });
 
   const [building, deposits, dues, collectionsByPeriod, billedByPeriod, occupancyHistory, activity, expenses, pgInfo, params] =
     await Promise.all([
@@ -38,7 +41,7 @@ export default async function DashboardPage({
       getBilledByPeriod(),
       getOccupancyHistory(6),
       listActivity(3),
-      prisma.expense.findMany({ where: { active: true } }),
+      prisma.expense.findMany({ where: { accountId, active: true } }),
       getPgInfo(),
       searchParams,
     ]);
@@ -187,7 +190,12 @@ export default async function DashboardPage({
             <span className="flex items-baseline gap-1.5">
               <Amount value={collectedSelectedMonth} tone="positive" size="xl" />
               {billedSelectedMonth > 0 && (
-                <span className="text-sm text-muted-foreground">of {inr(billedSelectedMonth)} billed</span>
+                <Link
+                  href={`/ledger?tab=billed&month=${selectedMonth}`}
+                  className="text-sm text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground"
+                >
+                  of {inr(billedSelectedMonth)} billed
+                </Link>
               )}
             </span>
             <p className="mt-0.5 text-sm text-muted-foreground">
@@ -237,6 +245,8 @@ export default async function DashboardPage({
       <div className="grid grid-cols-2 gap-3">
         <StatTile
           label="Beds filled"
+          icon={DoorOpen}
+          chip="blue"
           value={`${building.totals.occupied}/${building.totals.beds}`}
           hint={
             <span className="mt-0.5 flex gap-[3px]">
@@ -259,6 +269,8 @@ export default async function DashboardPage({
         />
         <StatTile
           label="Overdue"
+          icon={AlertTriangle}
+          chip="orange"
           value={inr(overdueTotal)}
           tone={overdueRows.length > 0 ? "owed" : "muted"}
           hint={overdueRows.length > 0 ? `${overdueRows.length} tenants · oldest ${chaseRows[0]?.daysLate ?? 0} days` : "Nobody is late"}
@@ -298,7 +310,7 @@ export default async function DashboardPage({
           Recent activity
         </SectionHeading>
         {activity.length === 0 ? (
-          <EmptyState icon={Sparkles} title="Nothing yet">
+          <EmptyState icon={Sparkles} chip="purple" title="Nothing yet">
             Everything you do (payments, readings, edits) gets recorded here.
           </EmptyState>
         ) : (
@@ -320,7 +332,7 @@ export default async function DashboardPage({
       </Panel>
 
       {building.totals.beds === 0 && (
-        <EmptyState icon={Wallet} title="Start by mapping your building">
+        <EmptyState icon={Wallet} chip="orange" title="Start by mapping your building">
           Add floors and rooms so rent splits per bed and every meter reading knows who to charge.
         </EmptyState>
       )}

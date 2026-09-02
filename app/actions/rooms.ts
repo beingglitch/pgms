@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "./activity";
+import { requireAccountId } from "./auth";
 import { effectiveRent, FULL_ROOM_BED, rentShare } from "@/lib/charges";
 import { resetElectricityIfRoomEmpty } from "./electricity";
 
@@ -19,7 +20,9 @@ function revalidateRoomViews() {
  * unoccupied bed is a gap in the list rather than a record of its own.
  */
 export async function getBuilding() {
+  const accountId = await requireAccountId();
   const floors = await prisma.floor.findMany({
+    where: { accountId },
     orderBy: [{ order: "asc" }, { name: "asc" }],
     include: {
       rooms: {
@@ -113,7 +116,9 @@ export async function getBuilding() {
  * "whole room" rather than reporting itself as occupied.
  */
 export async function listRoomOptions(excludeTenantId?: string) {
+  const accountId = await requireAccountId();
   const rooms = await prisma.room.findMany({
+    where: { accountId },
     orderBy: [{ floor: { order: "asc" } }, { number: "asc" }],
     include: {
       floor: { select: { name: true, order: true } },
@@ -151,26 +156,31 @@ export async function listRoomOptions(excludeTenantId?: string) {
 }
 
 export async function createFloor(actor: string, input: { name: string; order: number }) {
+  const accountId = await requireAccountId();
   const floor = await prisma.floor.create({
-    data: { name: input.name.trim(), order: input.order },
+    data: { accountId, name: input.name.trim(), order: input.order },
   });
-  await logActivity(actor, "Floor added", floor.name);
+  await logActivity(accountId, actor, "Floor added", floor.name);
   revalidateRoomViews();
   return floor;
 }
 
 export async function updateFloor(actor: string, id: string, input: { name: string; order: number }) {
+  const accountId = await requireAccountId();
+  await prisma.floor.findFirstOrThrow({ where: { id, accountId } });
   const floor = await prisma.floor.update({
     where: { id },
     data: { name: input.name.trim(), order: input.order },
   });
-  await logActivity(actor, "Floor updated", floor.name);
+  await logActivity(accountId, actor, "Floor updated", floor.name);
   revalidateRoomViews();
 }
 
 export async function deleteFloor(actor: string, id: string) {
+  const accountId = await requireAccountId();
+  await prisma.floor.findFirstOrThrow({ where: { id, accountId } });
   const floor = await prisma.floor.delete({ where: { id } });
-  await logActivity(actor, "Floor deleted", floor.name);
+  await logActivity(accountId, actor, "Floor deleted", floor.name);
   revalidateRoomViews();
 }
 
@@ -178,8 +188,12 @@ export async function createRoom(
   actor: string,
   input: { floorId: string; number: string; capacity: number; rentAmount: number; note?: string }
 ) {
+  const accountId = await requireAccountId();
+  await prisma.floor.findFirstOrThrow({ where: { id: input.floorId, accountId } });
+
   const room = await prisma.room.create({
     data: {
+      accountId,
       floorId: input.floorId,
       number: input.number.trim(),
       capacity: Math.max(1, input.capacity),
@@ -188,7 +202,7 @@ export async function createRoom(
     },
     include: { floor: { select: { name: true } } },
   });
-  await logActivity(actor, "Room added", `${room.floor.name} · Room ${room.number} · ${room.capacity} bed(s)`);
+  await logActivity(accountId, actor, "Room added", `${room.floor.name} · Room ${room.number} · ${room.capacity} bed(s)`);
   revalidateRoomViews();
   return room;
 }
@@ -198,12 +212,14 @@ export async function updateRoom(
   id: string,
   input: { number: string; capacity: number; rentAmount: number; note?: string }
 ) {
-  const current = await prisma.room.findUnique({
-    where: { id },
+  const accountId = await requireAccountId();
+  const current = await prisma.room.findFirst({
+    where: { id, accountId },
     include: { tenants: { where: { status: "ACTIVE" }, select: { id: true } } },
   });
+  if (!current) throw new Error("Room not found.");
   const capacity = Math.max(1, input.capacity);
-  if (current && capacity < current.tenants.length) {
+  if (capacity < current.tenants.length) {
     throw new Error(
       `${current.tenants.length} tenant(s) are currently in this room - capacity can't go below that.`
     );
@@ -226,18 +242,21 @@ export async function updateRoom(
   // billed is whatever was agreed at onboarding (or edited since) on their
   // own record, not a live recompute from the room - changing the room's
   // asking rent shouldn't silently move an already-settled tenant's number.
-  if (current && current.number !== room.number) {
+  if (current.number !== room.number) {
     await prisma.tenant.updateMany({
       where: { roomId: id, status: "ACTIVE" },
       data: { roomNumber: room.number },
     });
   }
 
-  await logActivity(actor, "Room updated", `Room ${room.number}`);
+  await logActivity(accountId, actor, "Room updated", `Room ${room.number}`);
   revalidateRoomViews();
 }
 
 export async function deleteRoom(actor: string, id: string) {
+  const accountId = await requireAccountId();
+  await prisma.room.findFirstOrThrow({ where: { id, accountId } });
+
   const affected = await prisma.tenant.findMany({
     where: { roomId: id, status: "ACTIVE" },
     select: { id: true },
@@ -254,7 +273,7 @@ export async function deleteRoom(actor: string, id: string) {
     });
   }
 
-  await logActivity(actor, "Room deleted", `Room ${room.number}`);
+  await logActivity(accountId, actor, "Room deleted", `Room ${room.number}`);
   revalidateRoomViews();
 }
 
@@ -281,15 +300,19 @@ export async function assignTenantToRoom(
   roomId: string | null,
   bedNumber?: string | null
 ) {
+  const accountId = await requireAccountId();
+  await prisma.tenant.findFirstOrThrow({ where: { id: tenantId, accountId } });
+
   const room = roomId
-    ? await prisma.room.findUnique({
-        where: { id: roomId },
+    ? await prisma.room.findFirst({
+        where: { id: roomId, accountId },
         include: {
           floor: { select: { name: true } },
           tenants: { where: { status: "ACTIVE", id: { not: tenantId } }, select: { id: true, bedNumber: true } },
         },
       })
     : null;
+  if (roomId && !room) throw new Error("Room not found.");
 
   if (room) {
     const wholeRoomTaken = room.tenants.some((t) => t.bedNumber === FULL_ROOM_BED);
@@ -320,6 +343,7 @@ export async function assignTenantToRoom(
   });
 
   await logActivity(
+    accountId,
     actor,
     roomId ? "Tenant assigned to bed" : "Tenant removed from room",
     room

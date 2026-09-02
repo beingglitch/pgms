@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ZoomableAvatar } from "@/components/image-viewer";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { BookOpen, IndianRupee, Plus, Receipt, Search, Sparkles, X } from "lucide-react";
+import { AlertTriangle, BookOpen, IndianRupee, Plus, Receipt, Search, Sparkles, Wallet, X } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { LedgerFormDialog } from "@/components/ledger-form-dialog";
@@ -19,7 +19,7 @@ import { SendDuesReminderDialog } from "@/components/send-dues-reminder-dialog";
 import { Amount, EmptyState, KhataRow, PageTitle, Panel, SectionHeading, StatTile } from "@/components/khata";
 import { DuesAgingChart } from "@/components/dues-aging-chart";
 import { deleteLedgerEntry, listLedger } from "@/app/actions/ledger";
-import { listOutstandingByTenant, waiveCharge } from "@/app/actions/charges";
+import { listAllCharges, listOutstandingByTenant, waiveCharge } from "@/app/actions/charges";
 import { deleteExpense, listExpenses } from "@/app/actions/expenses";
 import { listSecurityDeposits } from "@/app/actions/reports";
 import { bucketDuesAging, chargeOutstanding, chargePaid, CHARGE_TYPE_LABELS, num, periodLabel } from "@/lib/charges";
@@ -33,6 +33,7 @@ import { toast } from "sonner";
 type Entry = Awaited<ReturnType<typeof listLedger>>[number];
 type ExpenseRow = Serialised<Awaited<ReturnType<typeof listExpenses>>[number]>;
 type DueRow = Serialised<Awaited<ReturnType<typeof listOutstandingByTenant>>[number]>;
+type ChargeRow = Serialised<Awaited<ReturnType<typeof listAllCharges>>[number]>;
 type Deposits = Awaited<ReturnType<typeof listSecurityDeposits>>;
 type TenantOption = {
   id: string;
@@ -57,6 +58,7 @@ export function LedgerClient({
   expenses,
   deposits,
   dues,
+  charges,
   tenants,
   dueSoonDays,
   initialTab,
@@ -69,9 +71,10 @@ export function LedgerClient({
   expenses: ExpenseRow[];
   deposits: Deposits;
   dues: DueRow[];
+  charges: ChargeRow[];
   tenants: TenantOption[];
   dueSoonDays: number;
-  initialTab: "payments" | "dues" | "security";
+  initialTab: "payments" | "dues" | "security" | "billed";
   initialDuesFilter?: "all" | "upcoming" | "current";
   initialMonth?: string;
   signature: Signature;
@@ -84,7 +87,14 @@ export function LedgerClient({
   const [receipt, setReceipt] = useState<Entry | null>(null);
   const [remindTarget, setRemindTarget] = useState<DueRow | null>(null);
   const [payTarget, setPayTarget] = useState<DueRow | null>(null);
+  const [payCharge, setPayCharge] = useState<{
+    tenantId: string;
+    chargeId: string;
+    chargeLabel: string;
+    outstanding: number;
+  } | null>(null);
   const [duesFilter, setDuesFilter] = useState<"all" | "upcoming" | "current">(initialDuesFilter ?? "all");
+  const [duesView, setDuesView] = useState<"tenant" | "month">("month");
   const [pickingTenant, setPickingTenant] = useState(false);
   const [addDueTenant, setAddDueTenant] = useState<TenantOption | null>(null);
   const [tenantQuery, setTenantQuery] = useState("");
@@ -114,6 +124,25 @@ export function LedgerClient({
   // to the top - the tenant a chase list should surface first.
   const sortedDues = [...filteredDues].sort((a, b) => earliestDueDate(a) - earliestDueDate(b));
 
+  // Same dues, regrouped by billing month instead of by tenant - "who owes
+  // for September" rather than "what does Suraj owe across every month."
+  const flatDues = filteredDues.flatMap((row) =>
+    row.tenant.charges.filter((c) => chargeOutstanding(c) > 0.005).map((charge) => ({ row, charge }))
+  );
+  const monthGroupMap = new Map<string, typeof flatDues>();
+  for (const item of flatDues) {
+    const bucket = monthGroupMap.get(item.charge.period);
+    if (bucket) bucket.push(item);
+    else monthGroupMap.set(item.charge.period, [item]);
+  }
+  const monthGroups = Array.from(monthGroupMap.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([period, items]) => ({
+      period,
+      items: [...items].sort((a, b) => new Date(a.charge.dueDate).getTime() - new Date(b.charge.dueDate).getTime()),
+      total: items.reduce((s, it) => s + chargeOutstanding(it.charge), 0),
+    }));
+
   const agingBuckets = bucketDuesAging(
     dues.flatMap((d) => d.tenant.charges),
     today
@@ -123,7 +152,7 @@ export function LedgerClient({
     <div className="space-y-4">
       <PageTitle>Ledger</PageTitle>
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as "payments" | "dues" | "security")}>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as "payments" | "dues" | "billed" | "security")}>
         <TabsList className="sticky top-0 z-10 w-full rounded-xl bg-muted p-[3px] shadow-[0_1px_0_var(--border)]">
           <TabsTrigger value="payments" className="flex-1 rounded-lg text-[11.5px] font-bold">
             Payments
@@ -135,6 +164,9 @@ export function LedgerClient({
                 {dues.length}
               </span>
             )}
+          </TabsTrigger>
+          <TabsTrigger value="billed" className="flex-1 rounded-lg text-[11.5px] font-bold">
+            Billed
           </TabsTrigger>
           <TabsTrigger value="security" className="flex-1 rounded-lg text-[11.5px] font-bold">
             Security
@@ -164,9 +196,17 @@ export function LedgerClient({
           )}
 
           <div className="grid grid-cols-2 gap-3">
-            <StatTile label="Total pending" value={inr(totalOutstanding)} tone={totalOutstanding > 0 ? "owed" : "positive"} />
+            <StatTile
+              label="Total pending"
+              icon={Wallet}
+              chip="orange"
+              value={inr(totalOutstanding)}
+              tone={totalOutstanding > 0 ? "owed" : "positive"}
+            />
             <StatTile
               label="Of that, overdue"
+              icon={AlertTriangle}
+              chip="pink"
               value={inr(overdueTotal)}
               tone={overdueTotal > 0 ? "owed" : "muted"}
               hint={`${dues.length} tenant${dues.length === 1 ? "" : "s"} with a balance`}
@@ -185,30 +225,45 @@ export function LedgerClient({
           </Button>
 
           {dues.length === 0 ? (
-            <EmptyState icon={Sparkles} title="Nobody owes anything">
+            <EmptyState icon={Sparkles} chip="green" title="Nobody owes anything">
               Every charge raised so far has been paid in full.
             </EmptyState>
           ) : (
             <>
-              <div className="flex gap-2">
-                {(["all", "current", "upcoming"] as const).map((f) => (
-                  <button
-                    key={f}
-                    onClick={() => setDuesFilter(f)}
-                    className={`whitespace-nowrap rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
-                      duesFilter === f ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
-                    }`}
-                  >
-                    {f === "all" ? "All" : f === "current" ? "Current" : "Upcoming"}
-                  </button>
-                ))}
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex gap-2">
+                  {(["all", "current", "upcoming"] as const).map((f) => (
+                    <button
+                      key={f}
+                      onClick={() => setDuesFilter(f)}
+                      className={`whitespace-nowrap rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                        duesFilter === f ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+                      }`}
+                    >
+                      {f === "all" ? "All" : f === "current" ? "Current" : "Upcoming"}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex shrink-0 rounded-full bg-muted p-0.5 text-xs font-semibold">
+                  {(["tenant", "month"] as const).map((v) => (
+                    <button
+                      key={v}
+                      onClick={() => setDuesView(v)}
+                      className={`rounded-full px-2.5 py-1 transition-colors ${
+                        duesView === v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"
+                      }`}
+                    >
+                      {v === "tenant" ? "By tenant" : "By month"}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {sortedDues.length === 0 ? (
-                <EmptyState icon={Sparkles} title="Nothing here">
+                <EmptyState icon={Sparkles} chip="green" title="Nothing here">
                   No dues match this filter right now.
                 </EmptyState>
-              ) : (
+              ) : duesView === "tenant" ? (
                 <>
                   <SectionHeading className="mb-0">Oldest first</SectionHeading>
                   <div className="space-y-3">
@@ -220,19 +275,63 @@ export function LedgerClient({
                         onAddCharge={() => setChargeFor(row)}
                         onRemind={() => setRemindTarget(row)}
                         onPay={() => setPayTarget(row)}
+                        onPayCharge={(charge) =>
+                          setPayCharge({
+                            tenantId: row.tenant.id,
+                            chargeId: charge.id,
+                            chargeLabel: `${CHARGE_TYPE_LABELS[charge.type]} · ${periodLabel(charge.period)}`,
+                            outstanding: chargeOutstanding(charge),
+                          })
+                        }
                         onChanged={() => router.refresh()}
                       />
                     ))}
                   </div>
                 </>
+              ) : (
+                <div className="space-y-1">
+                  {monthGroups.map(({ period, items, total }) => (
+                    <div key={period}>
+                      <div className="flex items-baseline justify-between px-1 pb-1.5 pt-3 first:pt-1">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+                          {periodLabel(period)}
+                        </p>
+                        <Amount value={total} tone="owed" size="sm" />
+                      </div>
+                      <Panel className="py-0">
+                        {items.map(({ row, charge }) => (
+                          <MonthDueRow
+                            key={charge.id}
+                            row={row}
+                            charge={charge}
+                            onRemind={() => setRemindTarget(row)}
+                            onPay={() =>
+                              setPayCharge({
+                                tenantId: row.tenant.id,
+                                chargeId: charge.id,
+                                chargeLabel: `${CHARGE_TYPE_LABELS[charge.type]} · ${periodLabel(charge.period)}`,
+                                outstanding: chargeOutstanding(charge),
+                              })
+                            }
+                            onChanged={() => router.refresh()}
+                          />
+                        ))}
+                      </Panel>
+                    </div>
+                  ))}
+                </div>
               )}
             </>
           )}
         </TabsContent>
 
+        <TabsContent value="billed" className="mt-4">
+          <BilledTab charges={charges} initialMonth={tab === "billed" ? initialMonth : undefined} />
+        </TabsContent>
+
         <TabsContent value="security" className="mt-4 space-y-4">
           {deposits.tenants.length === 0 ? (
-            <EmptyState icon={Sparkles} title="No deposits held">
+            <EmptyState icon={Sparkles} chip="purple" title="No deposits held">
               Security deposits show up here once tenants are onboarded with one.
             </EmptyState>
           ) : (
@@ -290,6 +389,22 @@ export function LedgerClient({
           tenants={tenants as never}
           fixedTenantId={payTarget.tenant.id}
           outstandingAmount={payTarget.summary.total.outstanding}
+        />
+      )}
+      {payCharge && (
+        <LedgerFormDialog
+          open={!!payCharge}
+          onOpenChange={(o) => {
+            if (!o) {
+              setPayCharge(null);
+              router.refresh();
+            }
+          }}
+          tenants={tenants as never}
+          fixedTenantId={payCharge.tenantId}
+          chargeId={payCharge.chargeId}
+          chargeLabel={payCharge.chargeLabel}
+          outstandingAmount={payCharge.outstanding}
         />
       )}
       {chargeFor && (
@@ -554,7 +669,7 @@ function PaymentsTab({
       </Panel>
 
       {list.length === 0 ? (
-        <EmptyState icon={BookOpen} title={filtered ? "Nothing matches" : "No payments or spend yet"}>
+        <EmptyState icon={BookOpen} chip="blue" title={filtered ? "Nothing matches" : "No payments or spend yet"}>
           {filtered ? "Try a wider date range or clear the filters." : "Record your first payment and it will appear here with a receipt number."}
         </EmptyState>
       ) : (
@@ -658,12 +773,298 @@ function PaymentsTab({
   );
 }
 
+/**
+ * Every charge ever raised - paid, partly paid, or still open - browsable by
+ * billing month or by tenant. The full answer to "what makes up the number
+ * on the dashboard", not just what's still outstanding.
+ */
+function BilledTab({ charges, initialMonth }: { charges: ChargeRow[]; initialMonth?: string }) {
+  const [query, setQuery] = useState("");
+  const [month, setMonth] = useState(initialMonth ?? "all");
+  const [view, setView] = useState<"month" | "tenant">("month");
+
+  const months = Array.from(new Set(charges.map((c) => c.period))).sort().reverse();
+
+  const q = query.trim().toLowerCase();
+  const filtered = charges.filter((c) => {
+    if (month !== "all" && c.period !== month) return false;
+    if (!q) return true;
+    return (
+      (c.tenant?.name ?? "").toLowerCase().includes(q) ||
+      c.description.toLowerCase().includes(q) ||
+      c.type.toLowerCase().includes(q)
+    );
+  });
+
+  const total = filtered.reduce((s, c) => s + num(c.amount), 0);
+  const totalPaid = filtered.reduce((s, c) => s + chargePaid(c), 0);
+
+  const groupKey = (c: ChargeRow) => (view === "month" ? c.period : (c.tenant?.id ?? "unknown"));
+  const groupLabel = (c: ChargeRow) => (view === "month" ? periodLabel(c.period) : (c.tenant?.name ?? "Unknown tenant"));
+  const groupMap = new Map<string, ChargeRow[]>();
+  for (const c of filtered) {
+    const key = groupKey(c);
+    const bucket = groupMap.get(key);
+    if (bucket) bucket.push(c);
+    else groupMap.set(key, [c]);
+  }
+  const groups = Array.from(groupMap.entries())
+    .sort((a, b) => (view === "month" ? b[0].localeCompare(a[0]) : groupLabel(a[1][0]).localeCompare(groupLabel(b[1][0]))))
+    .map(([key, items]) => ({
+      key,
+      label: groupLabel(items[0]),
+      items,
+      total: items.reduce((s, c) => s + num(c.amount), 0),
+    }));
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search by tenant, type, or description"
+            className="pl-9"
+          />
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {["all", ...months].map((m) => (
+              <button
+                key={m}
+                onClick={() => setMonth(m)}
+                className={`whitespace-nowrap rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                  month === m ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                {m === "all" ? "All time" : periodLabel(m)}
+              </button>
+            ))}
+          </div>
+          <div className="flex shrink-0 rounded-full bg-muted p-0.5 text-xs font-semibold">
+            {(["month", "tenant"] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                className={`whitespace-nowrap rounded-full px-2.5 py-1 transition-colors ${
+                  view === v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"
+                }`}
+              >
+                {v === "month" ? "By month" : "By tenant"}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <Panel className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted-foreground">Billed in view</p>
+          <Amount value={total} size="lg" />
+        </div>
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted-foreground">Collected against it</p>
+          <Amount value={totalPaid} tone="positive" size="lg" />
+        </div>
+      </Panel>
+
+      {filtered.length === 0 ? (
+        <EmptyState icon={BookOpen} chip="orange" title="Nothing billed">
+          Try a different month or clear the search.
+        </EmptyState>
+      ) : (
+        <div className="space-y-1">
+          {groups.map((g) => (
+            <div key={g.key}>
+              <div className="flex items-baseline justify-between px-1 pb-1.5 pt-3 first:pt-1">
+                <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-muted-foreground">{g.label}</p>
+                <Amount value={g.total} size="sm" />
+              </div>
+              <Panel className="py-0">
+                {g.items.map((c) => (
+                  <BilledChargeRow key={c.id} charge={c} showPeriod={view === "tenant"} />
+                ))}
+              </Panel>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BilledChargeRow({ charge, showPeriod }: { charge: ChargeRow; showPeriod: boolean }) {
+  const outstanding = chargeOutstanding(charge);
+  const paid = chargePaid(charge);
+  const status = charge.waived ? "waived" : outstanding <= 0.005 ? "paid" : paid > 0.005 ? "partial" : "unpaid";
+  const roomLabel = charge.tenant?.room ? `${charge.tenant.room.floor.name} · Room ${charge.tenant.room.number}` : charge.tenant?.roomNumber;
+
+  return (
+    <KhataRow
+      className="py-2.5"
+      amount={
+        <div className="text-right">
+          <Amount value={num(charge.amount)} size="sm" />
+          <p
+            className={`mt-0.5 text-[11px] font-semibold ${
+              status === "paid"
+                ? "text-positive"
+                : status === "waived"
+                  ? "text-muted-foreground"
+                  : status === "partial"
+                    ? "text-marigold-foreground"
+                    : "text-ledger"
+            }`}
+          >
+            {status === "paid" ? "Paid" : status === "waived" ? "Waived" : status === "partial" ? `${inr(outstanding)} left` : "Unpaid"}
+          </p>
+        </div>
+      }
+    >
+      <div className="flex items-center gap-2.5">
+        <ZoomableAvatar
+          src={charge.tenant?.photoUrl}
+          name={charge.tenant?.name ?? "?"}
+          className="h-8 w-8"
+          fallbackClassName="text-[10px]"
+        />
+        <div className="min-w-0">
+          {charge.tenant ? (
+            <Link href={`/tenants/${charge.tenant.id}`} className="block truncate text-sm font-semibold hover:underline">
+              {charge.tenant.name}
+            </Link>
+          ) : (
+            <p className="truncate text-sm font-semibold">Unknown tenant</p>
+          )}
+          <p className="truncate text-xs text-muted-foreground">
+            {[roomLabel, CHARGE_TYPE_LABELS[charge.type], showPeriod ? periodLabel(charge.period) : null].filter(Boolean).join(" · ")}
+          </p>
+          <p className="truncate text-[11px] text-muted-foreground">Due {fmtDate(charge.dueDate)}</p>
+        </div>
+      </div>
+    </KhataRow>
+  );
+}
+
+/** One tenant's one open charge, for the "by month" view - the same charge that'd otherwise sit inside their tenant card, surfaced under its billing month instead. */
+function MonthDueRow({
+  row,
+  charge,
+  onRemind,
+  onPay,
+  onChanged,
+}: {
+  row: DueRow;
+  charge: DueRow["tenant"]["charges"][number];
+  onRemind: () => void;
+  onPay: () => void;
+  onChanged: () => void;
+}) {
+  const { manager } = useManager();
+  const { tenant } = row;
+  const today = todayISO();
+  const late = new Date(charge.dueDate).toISOString().slice(0, 10) < today;
+  const roomLabel = tenant.room ? `${tenant.room.floor.name} · Room ${tenant.room.number}` : tenant.roomNumber;
+  const [adjusting, setAdjusting] = useState(false);
+  const [confirmWaive, setConfirmWaive] = useState(false);
+
+  async function waive() {
+    await waiveCharge(manager, charge.id, true);
+    toast.success("Charge waived");
+    setConfirmWaive(false);
+    onChanged();
+  }
+
+  return (
+    <KhataRow
+      className="py-2.5"
+      amount={
+        <div className="text-right">
+          <Amount value={chargeOutstanding(charge)} tone="owed" size="sm" />
+          <div className="mt-0.5 flex items-center justify-end gap-2">
+            <button
+              onClick={() => setAdjusting(true)}
+              className="text-[11px] font-semibold text-muted-foreground hover:text-foreground"
+              title="Settle for a different amount"
+            >
+              Edit
+            </button>
+            <button onClick={onPay} className="text-[11px] font-semibold text-primary">
+              Pay
+            </button>
+            <button onClick={onRemind} className="text-[11px] font-semibold text-muted-foreground hover:text-foreground">
+              Remind
+            </button>
+            <button onClick={() => setConfirmWaive(true)} className="text-[11px] font-semibold text-muted-foreground hover:text-foreground">
+              Waive
+            </button>
+          </div>
+        </div>
+      }
+    >
+      <div className="flex items-center gap-2.5">
+        <ZoomableAvatar src={tenant.photoUrl} name={tenant.name} className="h-8 w-8" fallbackClassName="text-[10px]" />
+        <div className="min-w-0">
+          <Link href={`/tenants/${tenant.id}`} className="block truncate text-sm font-semibold hover:underline">
+            {tenant.name}
+          </Link>
+          <p className="truncate text-xs text-muted-foreground">
+            {[roomLabel, CHARGE_TYPE_LABELS[charge.type]].filter(Boolean).join(" · ")}
+          </p>
+          <p className={`truncate text-[11px] ${late ? "font-semibold text-ledger" : "text-muted-foreground"}`}>
+            {late ? "Overdue since" : "Due"} {fmtDate(charge.dueDate)}
+          </p>
+        </div>
+      </div>
+
+      {adjusting && (
+        <AdjustChargeDialog
+          open
+          onOpenChange={(o) => {
+            setAdjusting(o);
+            if (!o) onChanged();
+          }}
+          charge={{ id: charge.id, description: charge.description, amount: num(charge.amount), paid: chargePaid(charge) }}
+        />
+      )}
+
+      <Dialog open={confirmWaive} onOpenChange={setConfirmWaive}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Waive this charge?</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              <span className="font-semibold text-foreground">
+                {CHARGE_TYPE_LABELS[charge.type]} · {charge.description}
+              </span>{" "}
+              for {tenant.name}, due {fmtDate(charge.dueDate)}, will no longer count as owed. It stays on record,
+              marked waived, but drops out of their total due and out of anything you send them to chase.
+            </p>
+            <div className="flex gap-3">
+              <Button variant="outline" className="flex-1" onClick={() => setConfirmWaive(false)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" className="flex-1" onClick={waive}>
+                Waive {inr(chargeOutstanding(charge))}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </KhataRow>
+  );
+}
+
 function DueCard({
   row,
   manager,
   onAddCharge,
   onRemind,
   onPay,
+  onPayCharge,
   onChanged,
 }: {
   row: DueRow;
@@ -671,6 +1072,7 @@ function DueCard({
   onAddCharge: () => void;
   onRemind: () => void;
   onPay: () => void;
+  onPayCharge: (charge: DueRow["tenant"]["charges"][number]) => void;
   onChanged: () => void;
 }) {
   const { tenant, summary } = row;
@@ -745,7 +1147,14 @@ function DueCard({
                   >
                     Edit
                   </button>
-                  <Amount value={num(charge.amount)} tone="owed" size="sm" />
+                  <button
+                    onClick={() => onPayCharge(charge)}
+                    className="text-[11px] font-semibold text-primary"
+                    title="Pay just this charge"
+                  >
+                    Pay
+                  </button>
+                  <Amount value={chargeOutstanding(charge)} tone="owed" size="sm" />
                 </div>
               }
             >

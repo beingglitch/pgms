@@ -13,6 +13,34 @@ const TONE_CLASS: Record<Tone, string> = {
   muted: "text-muted-foreground",
 };
 
+/** One accent hue per feature area, so cards read as visually distinct rather than one repeated brand colour. */
+export type Chip = "blue" | "purple" | "green" | "orange" | "pink";
+
+const CHIP_CLASS: Record<Chip, string> = {
+  blue: "bg-chip-blue text-chip-blue-foreground",
+  purple: "bg-chip-purple text-chip-purple-foreground",
+  green: "bg-chip-green text-chip-green-foreground",
+  orange: "bg-chip-orange text-chip-orange-foreground",
+  pink: "bg-chip-pink text-chip-pink-foreground",
+};
+
+/** A small coloured circle around an icon — the recurring "feature chip" motif. */
+export function IconChip({
+  icon: Icon,
+  chip = "blue",
+  className,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  chip?: Chip;
+  className?: string;
+}) {
+  return (
+    <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-xl", CHIP_CLASS[chip], className)}>
+      <Icon className="h-[18px] w-[18px]" />
+    </span>
+  );
+}
+
 /**
  * Every rupee figure in the app goes through here, so amounts share one
  * typeface, one alignment, and one meaning per colour: red is owed, green is
@@ -47,6 +75,8 @@ export function StatTile({
   value,
   hint,
   tone = "ink",
+  icon,
+  chip = "blue",
   href,
   className,
 }: {
@@ -54,6 +84,9 @@ export function StatTile({
   value: React.ReactNode;
   hint?: React.ReactNode;
   tone?: Tone;
+  /** A coloured icon chip in the corner, so tiles read as visually distinct at a glance. */
+  icon?: React.ComponentType<{ className?: string }>;
+  chip?: Chip;
   href?: string;
   className?: string;
 }) {
@@ -61,7 +94,8 @@ export function StatTile({
     <>
       <div className="flex items-start justify-between gap-2">
         <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-muted-foreground">{label}</p>
-        {href && <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />}
+        {icon ? <IconChip icon={icon} chip={chip} className="h-8 w-8" /> : null}
+        {!icon && href && <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />}
       </div>
       <p
         className={cn(
@@ -135,17 +169,19 @@ export function Panel({ children, className }: { children: React.ReactNode; clas
 export function EmptyState({
   icon: Icon,
   title,
+  chip = "blue",
   children,
   action,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   title: string;
+  chip?: Chip;
   children?: React.ReactNode;
   action?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-border px-6 py-12 text-center">
-      <Icon className="h-7 w-7 text-muted-foreground" />
+    <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border px-6 py-12 text-center">
+      <IconChip icon={Icon} chip={chip} className="h-12 w-12 [&_svg]:h-6 [&_svg]:w-6" />
       <p className="font-display text-base font-semibold">{title}</p>
       {children && <p className="max-w-xs text-sm text-muted-foreground">{children}</p>}
       {action && <div className="mt-2">{action}</div>}

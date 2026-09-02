@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "./activity";
+import { requireAccountId } from "./auth";
 import { chargeOutstanding, FULL_ROOM_BED, planAllocations } from "@/lib/charges";
 import { generateDueRentCharges } from "./charges";
 import {
@@ -68,12 +69,14 @@ export type AgreementInput = {
 };
 
 export async function listTenants() {
-  return prisma.tenant.findMany({ orderBy: { createdAt: "desc" } });
+  const accountId = await requireAccountId();
+  return prisma.tenant.findMany({ where: { accountId }, orderBy: { createdAt: "desc" } });
 }
 
 export async function getTenant(id: string) {
-  return prisma.tenant.findUnique({
-    where: { id },
+  const accountId = await requireAccountId();
+  return prisma.tenant.findFirst({
+    where: { id, accountId },
     include: {
       room: { include: { floor: { select: { name: true } } } },
       agreements: { orderBy: { version: "desc" } },
@@ -104,12 +107,14 @@ export async function getTenant(id: string) {
 }
 
 export async function createTenant(actor: string, input: TenantInput, agreement: AgreementInput) {
+  const accountId = await requireAccountId();
   const room = input.roomId
-    ? await prisma.room.findUnique({
-        where: { id: input.roomId },
+    ? await prisma.room.findFirst({
+        where: { id: input.roomId, accountId },
         include: { tenants: { where: { status: "ACTIVE" }, select: { id: true } } },
       })
     : null;
+  if (input.roomId && !room) throw new Error("Room not found.");
 
   if (room && input.bedNumber === FULL_ROOM_BED && room.tenants.length > 0) {
     throw new Error("Someone's already in this room, so it can't be given out whole.");
@@ -132,6 +137,7 @@ export async function createTenant(actor: string, input: TenantInput, agreement:
 
   const tenant = await prisma.tenant.create({
     data: {
+      accountId,
       name: input.name,
       phone: input.phone,
       email: input.email,
@@ -182,7 +188,7 @@ export async function createTenant(actor: string, input: TenantInput, agreement:
       },
     },
   });
-  await logActivity(actor, "Tenant onboarded", `${tenant.name} · Room ${tenant.roomNumber || "-"}`);
+  await logActivity(accountId, actor, "Tenant onboarded", `${tenant.name} · Room ${tenant.roomNumber || "-"}`);
 
   if (input.roomId && input.meterStartReading !== undefined) {
     if (readingClosedForNewcomer) {
@@ -211,7 +217,7 @@ export async function createTenant(actor: string, input: TenantInput, agreement:
   // tenant's join month up to the lead window lands on the books right now.
   // For someone entered today but living here since April, that's April
   // (pro-rated), May, June, ... each as its own charge to settle one by one.
-  await generateDueRentCharges(actor, { revalidate: false });
+  await generateDueRentCharges(accountId, actor, { revalidate: false });
 
   if (input.advancePayment && input.advancePayment > 0) {
     await addLedgerEntry(actor, {
@@ -254,13 +260,15 @@ export async function createTenant(actor: string, input: TenantInput, agreement:
  * electricity state moving together.
  */
 export async function updateTenant(actor: string, id: string, input: Partial<TenantInput>) {
-  const existing = await prisma.tenant.findUnique({ where: { id }, select: { roomId: true } });
+  const accountId = await requireAccountId();
+  const existing = await prisma.tenant.findFirst({ where: { id, accountId }, select: { roomId: true } });
+  if (!existing) throw new Error("Tenant not found.");
   // roomId is onboarding-only (createTenant); room moves for an existing
   // tenant always go through assignTenantToRoom, never a plain field patch.
   const { roomNumber, bedNumber, ...rest } = input;
   delete rest.roomId;
   const data: Partial<TenantInput> = { ...rest };
-  if (!existing?.roomId) {
+  if (!existing.roomId) {
     if (roomNumber !== undefined) data.roomNumber = roomNumber;
     if (bedNumber !== undefined) data.bedNumber = bedNumber;
   }
@@ -272,7 +280,7 @@ export async function updateTenant(actor: string, id: string, input: Partial<Ten
       joinDate: input.joinDate ? new Date(input.joinDate) : undefined,
     },
   });
-  await logActivity(actor, "Tenant updated", tenant.name);
+  await logActivity(accountId, actor, "Tenant updated", tenant.name);
   revalidatePath("/tenants");
   revalidatePath(`/tenants/${id}`);
   return tenant;
@@ -285,9 +293,11 @@ export async function setTenantImage(
   field: "photoUrl" | "aadhaarFrontUrl" | "aadhaarBackUrl",
   url: string | null
 ) {
+  const accountId = await requireAccountId();
+  await prisma.tenant.findFirstOrThrow({ where: { id, accountId } });
   const tenant = await prisma.tenant.update({ where: { id }, data: { [field]: url } });
   const label = field === "photoUrl" ? "photo" : field === "aadhaarFrontUrl" ? "ID front" : "ID back";
-  await logActivity(actor, url ? "Tenant photo changed" : "Tenant photo removed", `${tenant.name} · ${label}`);
+  await logActivity(accountId, actor, url ? "Tenant photo changed" : "Tenant photo removed", `${tenant.name} · ${label}`);
   revalidatePath("/tenants");
   revalidatePath(`/tenants/${id}`);
   revalidatePath("/rooms");
@@ -295,8 +305,10 @@ export async function setTenantImage(
 }
 
 export async function deleteTenant(actor: string, id: string) {
+  const accountId = await requireAccountId();
+  await prisma.tenant.findFirstOrThrow({ where: { id, accountId } });
   const tenant = await prisma.tenant.delete({ where: { id } });
-  await logActivity(actor, "Tenant deleted", tenant.name);
+  await logActivity(accountId, actor, "Tenant deleted", tenant.name);
   if (tenant.roomId) await resetElectricityIfRoomEmpty(actor, tenant.roomId);
   revalidatePath("/tenants");
   revalidatePath("/rooms");
@@ -310,6 +322,8 @@ export async function deleteTenant(actor: string, id: string) {
  * record, the same way any other field on the tenant does.
  */
 export async function updateAgreementFields(actor: string, tenantId: string, fields: AgreementInput) {
+  const accountId = await requireAccountId();
+  await prisma.tenant.findFirstOrThrow({ where: { id: tenantId, accountId } });
   const current = await prisma.agreement.findFirst({ where: { tenantId }, orderBy: { version: "desc" } });
   if (!current) return;
 
@@ -354,6 +368,8 @@ export async function giveNotice(
   tenantId: string,
   input: { noticeDate: string; expectedVacateDate: string }
 ) {
+  const accountId = await requireAccountId();
+  await prisma.tenant.findFirstOrThrow({ where: { id: tenantId, accountId } });
   const tenant = await prisma.tenant.update({
     where: { id: tenantId },
     data: {
@@ -362,18 +378,20 @@ export async function giveNotice(
     },
   });
 
-  await logActivity(actor, "Notice recorded", `${tenant.name} · leaving ${input.expectedVacateDate}`);
+  await logActivity(accountId, actor, "Notice recorded", `${tenant.name} · leaving ${input.expectedVacateDate}`);
   revalidatePath("/tenants");
   revalidatePath(`/tenants/${tenantId}`);
   revalidatePath("/");
 }
 
 export async function cancelNotice(actor: string, tenantId: string) {
+  const accountId = await requireAccountId();
+  await prisma.tenant.findFirstOrThrow({ where: { id: tenantId, accountId } });
   const tenant = await prisma.tenant.update({
     where: { id: tenantId },
     data: { noticeDate: null, expectedVacateDate: null },
   });
-  await logActivity(actor, "Notice withdrawn", tenant.name);
+  await logActivity(accountId, actor, "Notice withdrawn", tenant.name);
   revalidatePath("/tenants");
   revalidatePath(`/tenants/${tenantId}`);
   revalidatePath("/");
@@ -391,7 +409,8 @@ export async function checkoutTenant(
     finalMeterReading?: number;
   }
 ) {
-  const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: tenantId } });
+  const accountId = await requireAccountId();
+  const tenant = await prisma.tenant.findFirstOrThrow({ where: { id: tenantId, accountId } });
   const checkoutDate = new Date(input.checkoutDate);
   const totalDeductions = input.deductions.reduce((s, d) => s + Number(d.amount || 0), 0);
 
@@ -406,7 +425,7 @@ export async function checkoutTenant(
   // Anything still on their account comes out of the deposit first, recorded as
   // a real payment so the charges show settled rather than silently vanishing.
   const openCharges = await prisma.charge.findMany({
-    where: { tenantId, waived: false },
+    where: { tenantId, accountId, waived: false },
     orderBy: [{ dueDate: "asc" }, { createdAt: "asc" }],
     include: { allocations: { select: { amount: true } } },
   });
@@ -415,6 +434,7 @@ export async function checkoutTenant(
   if (unpaidCharges > 0.005) {
     const settlement = await prisma.ledgerEntry.create({
       data: {
+        accountId,
         tenantId,
         type: "OTHER",
         amount: unpaidCharges,
@@ -461,6 +481,7 @@ export async function checkoutTenant(
       : []),
     prisma.ledgerEntry.create({
       data: {
+        accountId,
         tenantId,
         type: "REFUND",
         amount: refundAmount,
@@ -481,6 +502,7 @@ export async function checkoutTenant(
   ]);
 
   await logActivity(
+    accountId,
     actor,
     "Tenant checked out",
     `${tenant.name} · ${refundAmount >= 0 ? "refund" : "owed"} ₹${Math.abs(refundAmount)} via ${input.refundMethod}`

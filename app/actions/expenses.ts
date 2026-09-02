@@ -3,9 +3,11 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "./activity";
+import { requireAccountId } from "./auth";
 
 export async function listExpenses() {
-  return prisma.expense.findMany({ orderBy: { date: "desc" } });
+  const accountId = await requireAccountId();
+  return prisma.expense.findMany({ where: { accountId }, orderBy: { date: "desc" } });
 }
 
 export async function addExpense(
@@ -20,24 +22,29 @@ export async function addExpense(
     receiptUrl?: string;
   }
 ) {
+  const accountId = await requireAccountId();
   const expense = await prisma.expense.create({
-    data: { ...input, date: new Date(input.date), recordedBy: actor },
+    data: { ...input, accountId, date: new Date(input.date), recordedBy: actor },
   });
-  await logActivity(actor, "Expense recorded", `${input.title} · ₹${input.amount}`);
+  await logActivity(accountId, actor, "Expense recorded", `${input.title} · ₹${input.amount}`);
   revalidatePath("/expenses");
   revalidatePath("/");
   return expense;
 }
 
 export async function toggleExpenseActive(actor: string, id: string, active: boolean) {
+  const accountId = await requireAccountId();
+  await prisma.expense.findFirstOrThrow({ where: { id, accountId } });
   await prisma.expense.update({ where: { id }, data: { active } });
-  await logActivity(actor, active ? "Expense reactivated" : "Recurring expense stopped", id);
+  await logActivity(accountId, actor, active ? "Expense reactivated" : "Recurring expense stopped", id);
   revalidatePath("/expenses");
 }
 
 export async function deleteExpense(actor: string, id: string) {
+  const accountId = await requireAccountId();
+  await prisma.expense.findFirstOrThrow({ where: { id, accountId } });
   await prisma.expense.delete({ where: { id } });
-  await logActivity(actor, "Expense deleted", id);
+  await logActivity(accountId, actor, "Expense deleted", id);
   revalidatePath("/expenses");
   revalidatePath("/");
 }

@@ -172,7 +172,7 @@ export function ExpensesClient({
       )}
 
       {expenses.length === 0 && (
-        <EmptyState icon={Wallet} title="No expenses yet">
+        <EmptyState icon={Wallet} chip="pink" title="No expenses yet">
           Track maid, wifi, repairs, and anything else you spend on the PG, recurring or one-time.
         </EmptyState>
       )}

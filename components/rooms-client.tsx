@@ -174,6 +174,7 @@ export function RoomsClient({
       {building.floors.length === 0 && (
         <EmptyState
           icon={DoorOpen}
+          chip="orange"
           title="Map out your building"
           action={
             <Button onClick={() => setFloorForm({ open: true })}>

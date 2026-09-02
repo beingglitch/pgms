@@ -108,7 +108,7 @@ export function ActivityClient({ activity }: { activity: ActivityLogModel[] }) {
 
       <Panel>
         {activity.length === 0 ? (
-          <EmptyState icon={ClipboardList} title="Nothing yet">
+          <EmptyState icon={ClipboardList} chip="blue" title="Nothing yet">
             Every action taken in this app (payments, readings, edits) gets recorded here.
           </EmptyState>
         ) : filtered.length === 0 ? (
