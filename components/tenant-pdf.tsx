@@ -15,7 +15,7 @@ type TenantDetail = NonNullable<Awaited<ReturnType<typeof getTenant>>>;
 
 export type TenantPdfProps = {
   tenant: TenantDetail;
-  pg: { name: string; address: string; contact: string; ownerName: string };
+  pg: { name: string; address: string; contact: string; ownerName: string; logoUrl?: string | null };
   generatedAt: Date;
 };
 
@@ -50,6 +50,8 @@ const s = StyleSheet.create({
   grid2: { flexDirection: "row", gap: 16 },
   col: { flex: 1 },
   photo: { width: 64, height: 64, borderRadius: 8, objectFit: "cover", marginRight: 12 },
+  logo: { width: 40, height: 40, objectFit: "contain", marginRight: 10 },
+  headerLeft: { flexDirection: "row", alignItems: "center" },
   identityRow: { flexDirection: "row", alignItems: "flex-start" },
   name: { fontFamily: "Helvetica-Bold", fontSize: 14 },
   tableHead: {
@@ -159,10 +161,13 @@ export function TenantPdf({ tenant, pg, generatedAt }: TenantPdfProps) {
     <Document title={`${tenant.name} · ${pg.name}`} author={pg.name}>
       <Page size="A4" style={s.page}>
         <View style={s.header}>
-          <View>
-            <Text style={s.pgName}>{pg.name}</Text>
-            {pg.address ? <Text style={s.small}>{pg.address}</Text> : null}
-            {pg.contact ? <Text style={s.small}>{pg.contact}</Text> : null}
+          <View style={s.headerLeft}>
+            {pg.logoUrl ? <Image src={pg.logoUrl} style={s.logo} /> : null}
+            <View>
+              <Text style={s.pgName}>{pg.name}</Text>
+              {pg.address ? <Text style={s.small}>{pg.address}</Text> : null}
+              {pg.contact ? <Text style={s.small}>{pg.contact}</Text> : null}
+            </View>
           </View>
           <View>
             <Text style={s.title}>Tenant statement</Text>

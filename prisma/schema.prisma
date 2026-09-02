@@ -55,17 +55,26 @@ enum ChargeType {
 /// the app went multi-tenant; now a normal row per signup, keyed by email.
 model Account {
   id                     String  @id @default(cuid())
-  /// Login identifier.
+  /// Login identifier. Email is kept for record-keeping but no longer used
+  /// to sign in.
+  username               String  @unique
   email                  String  @unique
   name                   String  @default("My PG")
   shortName              String  @default("PG")
   logoUrl                String?
   address                String  @default("")
+  /// Map-picked location, from the onboarding wizard. Null when skipped.
+  latitude               Float?
+  longitude              Float?
   contact                String  @default("")
   totalBeds              Int     @default(0)
   paymentLink            String  @default("")
   ownerName              String  @default("Owner")
   electricityRatePerUnit Decimal @db.Decimal(10, 2) @default(8)
+
+  /// Null until the first-run onboarding wizard is finished (or skipped
+  /// through to the end); gates the redirect in app/(app)/layout.tsx.
+  onboardingCompletedAt DateTime?
 
   /// Window the dashboard "due soon" counter looks ahead by.
   dueSoonDays      Int       @default(7)

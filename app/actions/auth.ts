@@ -53,34 +53,64 @@ async function startSession(accountId: string) {
   });
 }
 
-/// New signup: a fresh, isolated Account. Replaces the old single-property
-/// "first run" password screen now that there can be many properties.
-export async function signUp(input: { email: string; password: string; pgName: string; ownerName: string }) {
-  const email = input.email.trim().toLowerCase();
-  if (!email.includes("@")) return { error: "Enter a valid email." };
-  if (input.password.length < 4) return { error: "Use at least 4 characters." };
-  if (!input.pgName.trim()) return { error: "Give your property a name." };
+const USERNAME_RE = /^[a-z0-9_-]{3,24}$/;
 
-  const existing = await prisma.account.findUnique({ where: { email } });
-  if (existing) return { error: "An account already exists for that email. Sign in instead." };
-
-  const account = await prisma.account.create({
-    data: {
-      email,
-      name: input.pgName.trim(),
-      ownerName: input.ownerName.trim() || "Owner",
-      passwordHash: hashPassword(input.password),
-    },
-  });
-  await startSession(account.id);
-  await logActivity(account.id, account.ownerName, "Account created", account.name);
-  redirect("/");
+function normalizeUsername(raw: string) {
+  return raw.trim().toLowerCase();
 }
 
-export async function signIn(email: string, password: string, next?: string) {
-  const account = await prisma.account.findUnique({ where: { email: email.trim().toLowerCase() } });
+/// Public (no session yet): prefills the signup form with something
+/// available, so most people never have to think about a username at all.
+export async function suggestUsername(): Promise<string> {
+  for (let i = 0; i < 10; i++) {
+    const candidate = `pg${Math.random().toString(36).slice(2, 7)}`;
+    if (!(await prisma.account.findUnique({ where: { username: candidate } }))) return candidate;
+  }
+  return `pg${Date.now().toString(36)}`;
+}
+
+/// Public: live-checked as the signup username field is edited.
+export async function checkUsernameAvailable(raw: string): Promise<{ available: boolean; reason?: string }> {
+  const username = normalizeUsername(raw);
+  if (!USERNAME_RE.test(username)) {
+    return { available: false, reason: "3-24 characters: lowercase letters, digits, _ or -." };
+  }
+  const existing = await prisma.account.findUnique({ where: { username } });
+  return existing ? { available: false, reason: "That username is taken." } : { available: true };
+}
+
+/// New signup: a fresh, isolated Account, only actually created once the
+/// shared developer code checks out - there's no email provider to send a
+/// real OTP through, so this stands in for that confirmation step. Lands on
+/// /onboarding rather than / since a brand-new account still needs its
+/// property set up.
+export async function signUp(input: { username: string; email: string; password: string; code: string }) {
+  const username = normalizeUsername(input.username);
+  const email = input.email.trim().toLowerCase();
+  if (!USERNAME_RE.test(username)) return { error: "Choose a valid username first." };
+  if (!email.includes("@")) return { error: "Enter a valid email." };
+  if (input.password.length < 4) return { error: "Use at least 4 characters." };
+  if (!verifyRecoveryCode(input.code)) return { error: "Incorrect code." };
+
+  const [existingUsername, existingEmail] = await Promise.all([
+    prisma.account.findUnique({ where: { username } }),
+    prisma.account.findUnique({ where: { email } }),
+  ]);
+  if (existingUsername) return { error: "That username was just taken. Go back and pick another." };
+  if (existingEmail) return { error: "An account already exists for that email. Sign in instead." };
+
+  const account = await prisma.account.create({
+    data: { username, email, passwordHash: hashPassword(input.password) },
+  });
+  await startSession(account.id);
+  await logActivity(account.id, account.ownerName, "Account created", account.username);
+  redirect("/onboarding");
+}
+
+export async function signIn(username: string, password: string, next?: string) {
+  const account = await prisma.account.findUnique({ where: { username: normalizeUsername(username) } });
   if (!account || !verifyPassword(password, account.passwordHash)) {
-    return { error: "Incorrect email or password." };
+    return { error: "Incorrect username or password." };
   }
 
   await startSession(account.id);
@@ -107,18 +137,18 @@ export async function changePassword(actor: string, current: string, next: strin
 
 /// The forgot-password path: no current password needed, just the recovery
 /// code set on the hosting side (DEVELOPER_RECOVERY_CODE) - paired with the
-/// account's email, since one global code now has to say *which* account
+/// account's username, since one global code now has to say *which* account
 /// it's resetting rather than "the" property. Everyday password changes
 /// should still go through Settings; this is only for lockouts.
-export async function resetPasswordWithCode(email: string, code: string, next: string) {
+export async function resetPasswordWithCode(username: string, code: string, next: string) {
   if (!process.env.DEVELOPER_RECOVERY_CODE) {
     return { error: "Password recovery isn't set up for this property." };
   }
   if (next.length < 4) return { error: "Use at least 4 characters." };
   if (!verifyRecoveryCode(code)) return { error: "Incorrect recovery code." };
 
-  const account = await prisma.account.findUnique({ where: { email: email.trim().toLowerCase() } });
-  if (!account) return { error: "No account with that email." };
+  const account = await prisma.account.findUnique({ where: { username: normalizeUsername(username) } });
+  if (!account) return { error: "No account with that username." };
 
   await prisma.account.update({ where: { id: account.id }, data: { passwordHash: hashPassword(next) } });
   await startSession(account.id);

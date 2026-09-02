@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { ManagerProvider } from "@/lib/manager-context";
 import { Nav } from "@/components/nav";
 import { getPgInfo } from "@/app/actions/settings";
@@ -6,6 +7,7 @@ export const dynamic = "force-dynamic";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const pgInfo = await getPgInfo();
+  if (!pgInfo.onboardingCompletedAt) redirect("/onboarding");
   return (
     <ManagerProvider initialOwnerName={pgInfo.ownerName}>
       <Nav pgName={pgInfo.name} shortName={pgInfo.shortName} logoUrl={pgInfo.logoUrl} />

@@ -7,10 +7,6 @@ import { BellRing, BookOpen, DoorOpen, Home, LogOut, Settings, Users, Wallet } f
 import { useManager } from "@/lib/manager-context";
 import { ZoomableImage } from "@/components/image-viewer";
 import { signOut } from "@/app/actions/auth";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Button } from "@/components/ui/button";
 
 /** The five things the owner does daily. Everything else lives in the menu.
  * Each carries its own accent colour, so the active tab reads as "which
@@ -25,9 +21,7 @@ const primaryNav = [
 
 export function Nav({ pgName, shortName, logoUrl }: { pgName: string; shortName: string; logoUrl?: string | null }) {
   const pathname = usePathname();
-  const { manager, setManager } = useManager();
-  const [editOpen, setEditOpen] = useState(false);
-  const [draft, setDraft] = useState(manager);
+  const { manager } = useManager();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -51,11 +45,6 @@ export function Nav({ pgName, shortName, logoUrl }: { pgName: string; shortName:
     document.addEventListener("mousedown", onOutside);
     return () => document.removeEventListener("mousedown", onOutside);
   }, [menuOpen]);
-
-  function save() {
-    setManager(draft);
-    setEditOpen(false);
-  }
 
   return (
     <>
@@ -95,7 +84,7 @@ export function Nav({ pgName, shortName, logoUrl }: { pgName: string; shortName:
                 <div className="my-1 h-px bg-border" />
                 <Link
                   href="/rooms"
-                  className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                  className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground sm:hidden"
                 >
                   <DoorOpen className="h-4 w-4" /> Rooms and beds
                 </Link>
@@ -105,16 +94,6 @@ export function Nav({ pgName, shortName, logoUrl }: { pgName: string; shortName:
                 >
                   <Settings className="h-4 w-4" /> Settings
                 </Link>
-                <button
-                  onClick={() => {
-                    setDraft(manager);
-                    setEditOpen(true);
-                    setMenuOpen(false);
-                  }}
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
-                >
-                  <Users className="h-4 w-4" /> Change your name
-                </button>
                 <div className="my-1 h-px bg-border" />
                 <button
                   onClick={() => signOut()}
@@ -174,22 +153,6 @@ export function Nav({ pgName, shortName, logoUrl }: { pgName: string; shortName:
           })}
         </div>
       </div>
-
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Your name</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Shown on every ledger entry, reminder, and edit you make: your accountability trail.
-          </p>
-          <div>
-            <Label className="mb-1.5">Name</Label>
-            <Input value={draft} onChange={(e) => setDraft(e.target.value)} />
-          </div>
-          <Button onClick={save}>Save name</Button>
-        </DialogContent>
-      </Dialog>
     </>
   );
 }

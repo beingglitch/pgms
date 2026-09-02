@@ -150,7 +150,7 @@
 }
 
 :root {
-  --radius: 0.875rem;
+  --radius: 0.625rem;
 
   /* Bright, cool white — the whole app's base changed from a cream ledger
      page to a crisp SaaS canvas as part of the colourful re-theme. */

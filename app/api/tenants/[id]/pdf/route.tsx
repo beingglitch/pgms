@@ -27,7 +27,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const buffer = await renderToBuffer(
     <TenantPdf
       tenant={tenant}
-      pg={{ name: pg.name, address: pg.address, contact: pg.contact, ownerName: pg.ownerName }}
+      pg={{ name: pg.name, address: pg.address, contact: pg.contact, ownerName: pg.ownerName, logoUrl: pg.logoUrl }}
       generatedAt={generatedAt}
     />
   );

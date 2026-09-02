@@ -204,7 +204,6 @@ export async function createRoom(
   });
   await logActivity(accountId, actor, "Room added", `${room.floor.name} · Room ${room.number} · ${room.capacity} bed(s)`);
   revalidateRoomViews();
-  return room;
 }
 
 export async function updateRoom(

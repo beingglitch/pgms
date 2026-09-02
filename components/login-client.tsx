@@ -5,12 +5,13 @@ import Link from "next/link";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { CodeInput } from "@/components/code-input";
 import { signIn, resetPasswordWithCode } from "@/app/actions/auth";
 import { Lock, KeyRound, Eye, EyeOff } from "lucide-react";
 
 export function LoginClient({ next }: { next?: string }) {
   const [mode, setMode] = useState<"signin" | "recover">("signin");
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [recoveryCode, setRecoveryCode] = useState("");
@@ -26,8 +27,8 @@ export function LoginClient({ next }: { next?: string }) {
     startTransition(async () => {
       // On success these both redirect, so only failures come back with a result.
       const result = recovering
-        ? await resetPasswordWithCode(email, recoveryCode, password)
-        : await signIn(email, password, next);
+        ? await resetPasswordWithCode(username, recoveryCode, password)
+        : await signIn(username, password, next);
       if (result?.error) setError(result.error);
     });
   }
@@ -40,7 +41,7 @@ export function LoginClient({ next }: { next?: string }) {
   }
 
   return (
-    <main className="flex min-h-dvh items-center justify-center px-5 py-12">
+    <main className="flex min-h-dvh items-center justify-center bg-gradient-to-b from-muted/60 to-background px-5 py-12">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center text-center">
           <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary font-display text-xl font-semibold text-primary-foreground shadow-card">
@@ -54,34 +55,23 @@ export function LoginClient({ next }: { next?: string }) {
 
         <form onSubmit={submit} className="space-y-4 rounded-2xl border bg-background p-6 shadow-card">
           <div>
-            <Label className="mb-1.5" htmlFor="email">
-              Email
+            <Label className="mb-1.5" htmlFor="username">
+              Username
             </Label>
             <Input
-              id="email"
-              type="email"
+              id="username"
               autoFocus
-              autoComplete="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
+              autoComplete="username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="yourusername"
             />
           </div>
 
           {recovering && (
             <div>
-              <Label className="mb-1.5" htmlFor="recovery-code">
-                6-digit recovery code
-              </Label>
-              <Input
-                id="recovery-code"
-                autoComplete="off"
-                inputMode="numeric"
-                maxLength={6}
-                value={recoveryCode}
-                onChange={(e) => setRecoveryCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                placeholder="000000"
-              />
+              <Label className="mb-1.5">6-digit recovery code</Label>
+              <CodeInput value={recoveryCode} onChange={setRecoveryCode} />
               <p className="mt-1 text-xs text-muted-foreground">From whoever manages the hosting.</p>
             </div>
           )}
@@ -118,7 +108,9 @@ export function LoginClient({ next }: { next?: string }) {
           <Button
             type="submit"
             className="w-full"
-            disabled={pending || password.length === 0 || email.length === 0 || (recovering && recoveryCode.length !== 6)}
+            disabled={
+              pending || password.length === 0 || username.length === 0 || (recovering && recoveryCode.length !== 6)
+            }
           >
             {recovering ? <KeyRound className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
             {pending ? "Please wait…" : recovering ? "Reset password & sign in" : "Sign in"}

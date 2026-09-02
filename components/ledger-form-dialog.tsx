@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { addLedgerEntry } from "@/app/actions/ledger";
+import { adjustChargeAmount } from "@/app/actions/charges";
 import { updateTenant } from "@/app/actions/tenants";
 import { useManager } from "@/lib/manager-context";
 import { inr, todayISO } from "@/lib/format";
@@ -130,6 +131,30 @@ export function LedgerFormDialog({
     }
   }
 
+  /**
+   * Whatever's typed in Amount becomes what this charge actually settles
+   * for - not a payment toward the original bill, the bill itself changes
+   * to match (e.g. billed ₹9,000, tenant and owner agree on ₹8,000 - or
+   * ₹10,000 - and that's what's now owed and what's now recorded as paid).
+   * "Save" still records a plain payment without touching the bill; this is
+   * for when the two disagree.
+   */
+  async function settle() {
+    if (!tenantId || !amount || !chargeId) return;
+    setSaving(true);
+    try {
+      await adjustChargeAmount(manager, chargeId, Number(amount));
+      await addLedgerEntry(manager, { tenantId, type, amount: Number(amount), date, mode, note: note || undefined, chargeId });
+      toast.success(`Settled for ${inr(Number(amount))}`);
+      onOpenChange(false);
+      router.refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't settle this charge.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -238,10 +263,23 @@ export function LedgerFormDialog({
             <Label className="mb-1">Note (optional)</Label>
             <Input value={note} onChange={(e) => setNote(e.target.value)} />
           </div>
+          {chargeId && (
+            <p className="text-xs text-muted-foreground">
+              <span className="font-semibold text-foreground">Save</span> records this as a payment toward the{" "}
+              {inr(outstandingAmount ?? 0)} billed.{" "}
+              <span className="font-semibold text-foreground">Settle</span> instead makes {inr(Number(amount || 0))}{" "}
+              the actual amount owed and marks it paid in full.
+            </p>
+          )}
           <div className="flex gap-3 pt-1">
             <Button variant="outline" className="flex-1" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
+            {chargeId && (
+              <Button variant="secondary" className="flex-1" onClick={settle} disabled={saving || !amount}>
+                Settle
+              </Button>
+            )}
             <Button className="flex-1" onClick={submit} disabled={saving}>
               Save
             </Button>
