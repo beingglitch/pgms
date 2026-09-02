@@ -24,10 +24,11 @@ import { resetElectricityReading, setMeterPhoto } from "@/app/actions/electricit
 import { useManager } from "@/lib/manager-context";
 import { initials, fmtDate, dateISO, inr } from "@/lib/format";
 import { FULL_ROOM_BED } from "@/lib/charges";
+import type { Serialised } from "@/lib/serialize";
 import { ZoomableAvatar, ZoomableImage } from "@/components/image-viewer";
 import { toast } from "sonner";
 
-type Building = Awaited<ReturnType<typeof getBuilding>>;
+type Building = Serialised<Awaited<ReturnType<typeof getBuilding>>>;
 type Room = Building["floors"][number]["rooms"][number];
 type Floor = Building["floors"][number];
 type Person = { id: string; name: string; photoUrl: string | null };

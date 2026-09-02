@@ -5,6 +5,7 @@ import { listSecurityDeposits } from "@/app/actions/reports";
 import { getPgInfo } from "@/app/actions/settings";
 import { prisma } from "@/lib/prisma";
 import { num } from "@/lib/charges";
+import { serialise } from "@/lib/serialize";
 import { LedgerClient } from "@/components/ledger-client";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +15,7 @@ export default async function LedgerPage({
 }: {
   searchParams: Promise<{ tab?: string; filter?: string; month?: string }>;
 }) {
-  const [entries, expenses, deposits, dues, tenants, pgInfo, params] = await Promise.all([
+  const [entries, rawExpenses, deposits, rawDues, tenants, pgInfo, params] = await Promise.all([
     listLedger(),
     listExpenses(),
     listSecurityDeposits(),
@@ -44,9 +45,9 @@ export default async function LedgerPage({
   return (
     <LedgerClient
       entries={entries}
-      expenses={expenses}
+      expenses={serialise(rawExpenses)}
       deposits={deposits}
-      dues={dues}
+      dues={serialise(rawDues)}
       tenants={tenants}
       dueSoonDays={pgInfo.dueSoonDays}
       initialTab={

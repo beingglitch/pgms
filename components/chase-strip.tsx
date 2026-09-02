@@ -14,7 +14,8 @@ import { inr } from "@/lib/format";
 import type { TenantModel } from "@/lib/generated/prisma/models";
 
 export type ChaseRow = {
-  tenant: Pick<TenantModel, "id" | "name" | "phone" | "email" | "roomNumber" | "rentAmount"> & {
+  tenant: Pick<TenantModel, "id" | "name" | "phone" | "email" | "roomNumber"> & {
+    rentAmount: number;
     room: { id: string; number: string } | null;
   };
   outstanding: number;
@@ -34,7 +35,7 @@ export function ChaseStrip({
   paymentLink,
 }: {
   rows: ChaseRow[];
-  tenants: Pick<TenantModel, "id" | "name" | "roomNumber" | "rentAmount">[];
+  tenants: (Pick<TenantModel, "id" | "name" | "roomNumber"> & { rentAmount: number })[];
   signature: Signature;
   paymentLink: string;
 }) {

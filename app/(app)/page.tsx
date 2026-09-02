@@ -110,7 +110,7 @@ export default async function DashboardPage({
           phone: d.tenant.phone,
           email: d.tenant.email,
           roomNumber: d.tenant.roomNumber,
-          rentAmount: d.tenant.rentAmount,
+          rentAmount: num(d.tenant.rentAmount),
           room: d.tenant.room ? { id: d.tenant.room.id, number: d.tenant.room.number } : null,
         },
         outstanding: d.summary.total.outstanding,
@@ -224,7 +224,12 @@ export default async function DashboardPage({
 
       <ChaseStrip
         rows={chaseRows}
-        tenants={dues.map((d) => d.tenant)}
+        tenants={dues.map((d) => ({
+          id: d.tenant.id,
+          name: d.tenant.name,
+          roomNumber: d.tenant.roomNumber,
+          rentAmount: num(d.tenant.rentAmount),
+        }))}
         signature={{ pgName: pgInfo.name, ownerName: pgInfo.ownerName, contact: pgInfo.contact }}
         paymentLink={pgInfo.paymentLink}
       />

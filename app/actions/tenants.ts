@@ -3,7 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "./activity";
-import { chargeOutstanding, planAllocations } from "@/lib/charges";
+import { chargeOutstanding, FULL_ROOM_BED, planAllocations } from "@/lib/charges";
 import { generateDueRentCharges } from "./charges";
 import {
   closeElectricityReading,
@@ -111,6 +111,10 @@ export async function createTenant(actor: string, input: TenantInput, agreement:
       })
     : null;
 
+  if (room && input.bedNumber === FULL_ROOM_BED && room.tenants.length > 0) {
+    throw new Error("Someone's already in this room, so it can't be given out whole.");
+  }
+
   // A room that's already occupied has a meter reading in progress for the
   // people in it. The newcomer's number closes that reading *before* they
   // exist, so its electricity (from wherever it started up to today) is
@@ -137,6 +141,11 @@ export async function createTenant(actor: string, input: TenantInput, agreement:
       roomNumber: room?.number ?? input.roomNumber,
       bedNumber: input.bedNumber,
       rentAmount: input.rentAmount,
+      // Taking the whole room pins rent to the room's full amount: the
+      // per-bed split (what effectiveRent() would otherwise fall back to
+      // for any room-linked tenant) no longer applies with nobody to share
+      // it with.
+      rentOverride: input.bedNumber === FULL_ROOM_BED && room ? room.rentAmount : undefined,
       depositAmount: input.depositAmount,
       depositMethod: input.depositMethod,
       depositChequeNumber: input.depositChequeNumber,

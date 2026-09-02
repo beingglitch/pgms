@@ -106,7 +106,7 @@ export async function listRoomOptions() {
   const rooms = await prisma.room.findMany({
     orderBy: [{ floor: { order: "asc" } }, { number: "asc" }],
     include: {
-      floor: { select: { name: true } },
+      floor: { select: { name: true, order: true } },
       tenants: { where: { status: "ACTIVE" }, select: { id: true, bedNumber: true } },
       meterReadings: { where: { endDate: null }, select: { id: true }, take: 1 },
     },
@@ -114,17 +114,24 @@ export async function listRoomOptions() {
 
   return rooms.map((room) => {
     const wholeRoomTaken = room.tenants.some((t) => t.bedNumber === FULL_ROOM_BED);
+    const takenBeds = wholeRoomTaken
+      ? Array.from({ length: room.capacity }, (_, i) => String(i + 1))
+      : (room.tenants.map((t) => t.bedNumber).filter(Boolean) as string[]);
     return {
       id: room.id,
       label: `${room.floor.name} · Room ${room.number}`,
+      floorName: room.floor.name,
+      floorOrder: room.floor.order,
       number: room.number,
       capacity: room.capacity,
       rentAmount: Number(room.rentAmount),
       occupied: wholeRoomTaken ? room.capacity : room.tenants.length,
       perBed: rentShare(room),
-      takenBeds: wholeRoomTaken
-        ? Array.from({ length: room.capacity }, (_, i) => String(i + 1))
-        : (room.tenants.map((t) => t.bedNumber).filter(Boolean) as string[]),
+      takenBeds,
+      // Which beds a new tenant could actually pick: any free numbered bed,
+      // plus "the whole room" only when nobody at all is in it yet.
+      freeBeds: Array.from({ length: room.capacity }, (_, i) => String(i + 1)).filter((b) => !takenBeds.includes(b)),
+      canTakeWholeRoom: room.tenants.length === 0,
       hasOpenReading: room.meterReadings.length > 0,
     };
   });

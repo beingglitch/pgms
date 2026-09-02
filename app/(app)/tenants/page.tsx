@@ -11,7 +11,7 @@ export default async function TenantsPage() {
   const [rawTenants, dues, roomOptions, pgInfo] = await Promise.all([
     prisma.tenant.findMany({
       orderBy: { createdAt: "desc" },
-      include: { room: { include: { floor: { select: { name: true } } } } },
+      include: { room: { select: { number: true, floor: { select: { name: true } } } } },
     }),
     listOutstandingByTenant(),
     listRoomOptions(),

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,7 +18,7 @@ import { PhotoUpload } from "@/components/photo-upload";
 import { useManager } from "@/lib/manager-context";
 import { createTenant, updateTenant, updateAgreementFields, type TenantInput, type AgreementInput } from "@/app/actions/tenants";
 import { todayISO, inr, fmtDate } from "@/lib/format";
-import { dayRangeLabel, pendingRentPeriods, periodLabel } from "@/lib/charges";
+import { dayRangeLabel, FULL_ROOM_BED, pendingRentPeriods, periodLabel } from "@/lib/charges";
 import { waLink } from "@/lib/messaging";
 import { Plus, X, Download, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
@@ -109,34 +110,37 @@ export function TenantFormDialog({
 
   const [saving, setSaving] = useState(false);
 
-  // Onboarding-only bed picker. Room assignment after onboarding still goes
-  // through the Rooms page; this just saves a trip for the common case of
-  // "this tenant has a bed from day one". The bed itself is never asked for,
-  // just the first free one in whatever room is picked.
+  // Onboarding-only room/bed picker. Room assignment after onboarding still
+  // goes through the Rooms page; this just saves a trip for the common case
+  // of "this tenant has a bed from day one". Laid out as floor -> room ->
+  // tappable bed chips rather than cascading dropdowns, and only ever shows
+  // beds that are actually free (plus "whole room" when nobody's in it yet).
   const [pickedRoomId, setPickedRoomId] = useState<string | null>(null);
+  const [pickedBed, setPickedBed] = useState<string | null>(null);
   const [meterStartReading, setMeterStartReading] = useState("");
   const [meterStartPhotoUrl, setMeterStartPhotoUrl] = useState("");
   const [advancePayment, setAdvancePayment] = useState("");
   const pickedRoom = roomOptions.find((r) => r.id === pickedRoomId) ?? null;
 
-  function pickRoom(roomId: string | null) {
-    if (!roomId) {
-      setPickedRoomId(null);
-      return;
-    }
-    const room = roomOptions.find((r) => r.id === roomId) ?? null;
-    setPickedRoomId(roomId);
-    const firstFreeBed = room
-      ? Array.from({ length: room.capacity }, (_, i) => String(i + 1)).find((b) => !room.takenBeds.includes(b))
-      : undefined;
-    if (room) {
-      setF((s) => ({
-        ...s,
-        roomNumber: room.number,
-        bedNumber: firstFreeBed ?? "",
-        rentAmount: room.perBed,
-      }));
-    }
+  const availableRooms = roomOptions.filter((r) => r.freeBeds.length > 0 || r.canTakeWholeRoom);
+  const floors = Array.from(new Map(availableRooms.map((r) => [r.floorName, r.floorOrder])).entries())
+    .sort((a, b) => a[1] - b[1])
+    .map(([name]) => name);
+
+  function pickBed(room: RoomOption, bed: string) {
+    setPickedRoomId(room.id);
+    setPickedBed(bed);
+    setF((s) => ({
+      ...s,
+      roomNumber: room.number,
+      bedNumber: bed,
+      rentAmount: bed === FULL_ROOM_BED ? room.rentAmount : room.perBed,
+    }));
+  }
+
+  function clearRoomPick() {
+    setPickedRoomId(null);
+    setPickedBed(null);
   }
 
   function set<K extends keyof TenantInput>(key: K, value: TenantInput[K]) {
@@ -149,6 +153,7 @@ export function TenantFormDialog({
     setF(blank);
     setAgreement(blankAgreement(blank.rentAmount, blank.depositAmount, blank.roomNumber));
     setPickedRoomId(null);
+    setPickedBed(null);
     setMeterStartReading("");
     setMeterStartPhotoUrl("");
     setAdvancePayment("");
@@ -206,6 +211,10 @@ export function TenantFormDialog({
       toast.error("Name and phone are required");
       return;
     }
+    if (isNew && pickedRoomId && !pickedBed) {
+      toast.error("Pick which bed (or the whole room)");
+      return;
+    }
     // A picked room always needs a meter number and a photo: it either
     // starts the room's first reading or closes the current one for the
     // people already there, and both need real proof.
@@ -234,7 +243,11 @@ export function TenantFormDialog({
           },
           { ...agreement, roomNumber: f.roomNumber, rentAmount: f.rentAmount, depositAmount: f.depositAmount }
         );
-        toast.success(pickedRoom ? `Tenant onboarded into ${pickedRoom.label}` : "Tenant onboarded");
+        toast.success(
+          pickedRoom
+            ? `Tenant onboarded into ${pickedRoom.label}${pickedBed === FULL_ROOM_BED ? " (whole room)" : ` · bed ${pickedBed}`}`
+            : "Tenant onboarded"
+        );
         router.refresh();
         // Stay open so the download/share buttons below have something to
         // hand over; the form itself resets once this closes.
@@ -318,37 +331,82 @@ export function TenantFormDialog({
 
           {isNew && roomOptions.length > 0 && (
             <div className="rounded-xl border border-border bg-muted/30 p-3">
-              <Label className="mb-1.5">Room (optional, assign later from Rooms if you&apos;d rather)</Label>
-              <Select
-                value={pickedRoomId ?? "none"}
-                onValueChange={(v) => pickRoom(v && v !== "none" ? v : null)}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue>
-                    {(value: string) =>
-                      value === "none" || !value ? "No room yet" : (roomOptions.find((r) => r.id === value)?.label ?? "No room yet")
-                    }
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No room yet</SelectItem>
-                  {roomOptions.map((r) => (
-                    <SelectItem key={r.id} value={r.id} disabled={r.occupied >= r.capacity}>
-                      {r.label} ({r.capacity - r.occupied} bed{r.capacity - r.occupied === 1 ? "" : "s"} free)
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <Label>Room (optional, assign later from Rooms if you&apos;d rather)</Label>
+                {pickedRoomId && (
+                  <button
+                    type="button"
+                    onClick={clearRoomPick}
+                    className="shrink-0 text-[11px] font-semibold text-muted-foreground hover:text-foreground"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
 
-              {pickedRoom && (
+              {availableRooms.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No beds free right now.</p>
+              ) : (
+                <div className="max-h-64 space-y-3 overflow-y-auto pr-1">
+                  {floors.map((floor) => (
+                    <div key={floor}>
+                      <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">{floor}</p>
+                      <div className="space-y-1.5">
+                        {availableRooms
+                          .filter((r) => r.floorName === floor)
+                          .map((room) => (
+                            <div
+                              key={room.id}
+                              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/70 bg-background px-2.5 py-2"
+                            >
+                              <span className="shrink-0 text-xs font-semibold">Room {room.number}</span>
+                              <div className="flex flex-wrap justify-end gap-1.5">
+                                {room.freeBeds.map((b) => (
+                                  <button
+                                    key={b}
+                                    type="button"
+                                    onClick={() => pickBed(room, b)}
+                                    className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                                      pickedRoomId === room.id && pickedBed === b
+                                        ? "border-primary bg-primary text-primary-foreground"
+                                        : "border-input text-muted-foreground hover:bg-muted"
+                                    }`}
+                                  >
+                                    Bed {b}
+                                  </button>
+                                ))}
+                                {room.canTakeWholeRoom && (
+                                  <button
+                                    type="button"
+                                    onClick={() => pickBed(room, FULL_ROOM_BED)}
+                                    className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                                      pickedRoomId === room.id && pickedBed === FULL_ROOM_BED
+                                        ? "border-primary bg-primary text-primary-foreground"
+                                        : "border-input text-muted-foreground hover:bg-muted"
+                                    }`}
+                                  >
+                                    Full room
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {pickedBed && pickedRoom && (
                 <p className="mt-2 text-xs text-muted-foreground">
-                  Bed assigned automatically (first free one). Rent set to {inr(pickedRoom.perBed)}, this
-                  room&apos;s per-bed share. Rent is per calendar month: the join month is charged from the day
-                  after joining, every month after is due on the 1st.
+                  Rent set to {inr(pickedBed === FULL_ROOM_BED ? pickedRoom.rentAmount : pickedRoom.perBed)}
+                  {pickedBed === FULL_ROOM_BED ? ", the room's full amount" : ", this room's per-bed share"}. Rent
+                  is per calendar month: the join month is charged from the day after joining, every month after
+                  is due on the 1st.
                 </p>
               )}
 
-              {pickedRoom && (
+              {pickedBed && pickedRoom && (
                 <div className="mt-3 border-t border-border/70 pt-3">
                   <Label className="mb-1.5">
                     Current meter reading <span className="text-destructive">*</span>
@@ -374,7 +432,7 @@ export function TenantFormDialog({
           )}
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {(!isNew || roomOptions.length === 0 || !pickedRoomId) && (
+            {(!isNew || roomOptions.length === 0 || !pickedBed) && (
               <>
                 <Field label="Room number">
                   <Input value={f.roomNumber} onChange={(e) => set("roomNumber", e.target.value)} />
@@ -521,9 +579,17 @@ export function TenantFormDialog({
                     }
                   />
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {isNew
-                      ? `Filled in from Settings, ${inr(electricityRatePerUnit)} per unit. Change it here just for this tenant if needed.`
-                      : "Updating this changes the tenant's agreement directly, no new version."}
+                    {isNew ? (
+                      <>
+                        Filled in from{" "}
+                        <Link href="/settings" className="font-semibold text-primary hover:underline">
+                          Settings
+                        </Link>
+                        , {inr(electricityRatePerUnit)} per unit. Change it here just for this tenant if needed.
+                      </>
+                    ) : (
+                      "Updating this changes the tenant's agreement directly, no new version."
+                    )}
                   </p>
                 </Field>
               </div>

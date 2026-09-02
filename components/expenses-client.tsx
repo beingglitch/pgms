@@ -13,6 +13,7 @@ import { inr, fmtDate, monthKey } from "@/lib/format";
 import { round2 } from "@/lib/charges";
 import { toast } from "sonner";
 import type { ExpenseModel } from "@/lib/generated/prisma/models";
+import type { Serialised } from "@/lib/serialize";
 
 // Cycled by category so each gets a stable, distinct dot colour; "Electricity"
 // (by name, case-insensitive) always gets the token the rest of the app
@@ -28,7 +29,7 @@ export function ExpensesClient({
   expenses,
   electricityBilledBack,
 }: {
-  expenses: ExpenseModel[];
+  expenses: Serialised<ExpenseModel>[];
   electricityBilledBack: number;
 }) {
   const router = useRouter();

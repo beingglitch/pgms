@@ -3,7 +3,8 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ZoomableAvatar } from "@/components/image-viewer";
@@ -25,11 +26,12 @@ import { bucketDuesAging, chargeOutstanding, CHARGE_TYPE_LABELS, num, periodLabe
 import { type Signature } from "@/lib/messages";
 import { useManager } from "@/lib/manager-context";
 import { inr, fmtDate, monthKey, todayISO, daysFromNowISO, dateISO, paymentMethodLabel } from "@/lib/format";
+import type { Serialised } from "@/lib/serialize";
 import { toast } from "sonner";
 
 type Entry = Awaited<ReturnType<typeof listLedger>>[number];
-type ExpenseRow = Awaited<ReturnType<typeof listExpenses>>[number];
-type DueRow = Awaited<ReturnType<typeof listOutstandingByTenant>>[number];
+type ExpenseRow = Serialised<Awaited<ReturnType<typeof listExpenses>>[number]>;
+type DueRow = Serialised<Awaited<ReturnType<typeof listOutstandingByTenant>>[number]>;
 type Deposits = Awaited<ReturnType<typeof listSecurityDeposits>>;
 type TenantOption = {
   id: string;
@@ -765,9 +767,9 @@ function DueCard({
         <Button size="sm" variant="outline" onClick={onAddCharge}>
           <Plus className="h-3.5 w-3.5" /> Add charge
         </Button>
-        <Button size="sm" variant="ghost" render={<Link href={`/tenants/${tenant.id}`} />}>
+        <Link href={`/tenants/${tenant.id}`} className={cn(buttonVariants({ size: "sm", variant: "ghost" }))}>
           <Receipt className="h-3.5 w-3.5" /> Open tenant
-        </Button>
+        </Link>
         {open.length > 0 && (
           <button
             onClick={() => setConfirmWaive(true)}

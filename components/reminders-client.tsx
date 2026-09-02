@@ -14,10 +14,11 @@ import { listOutstandingByTenant } from "@/app/actions/charges";
 import { type Signature } from "@/lib/messages";
 import { chargeOutstanding, CHARGE_TYPE_LABELS } from "@/lib/charges";
 import { inr, fmtDate } from "@/lib/format";
+import type { Serialised } from "@/lib/serialize";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-type DueRow = Awaited<ReturnType<typeof listOutstandingByTenant>>[number];
+type DueRow = Serialised<Awaited<ReturnType<typeof listOutstandingByTenant>>[number]>;
 type History = Awaited<ReturnType<typeof getReminderHistory>>;
 
 export function RemindersClient({

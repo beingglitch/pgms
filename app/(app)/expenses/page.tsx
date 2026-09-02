@@ -3,13 +3,14 @@ import { ExpensesClient } from "@/components/expenses-client";
 import { prisma } from "@/lib/prisma";
 import { monthKey } from "@/lib/format";
 import { num, round2 } from "@/lib/charges";
+import { serialise } from "@/lib/serialize";
 
 export const dynamic = "force-dynamic";
 
 export default async function ExpensesPage() {
   const thisMonth = monthKey(new Date());
 
-  const [expenses, electricityCharges] = await Promise.all([
+  const [rawExpenses, electricityCharges] = await Promise.all([
     listExpenses(),
     // What was actually billed back to tenants this month, so the Spend
     // screen can show the gap between that and the electricity expense line
@@ -19,5 +20,5 @@ export default async function ExpensesPage() {
 
   const electricityBilledBack = round2(electricityCharges.reduce((s, c) => s + num(c.amount), 0));
 
-  return <ExpensesClient expenses={expenses} electricityBilledBack={electricityBilledBack} />;
+  return <ExpensesClient expenses={serialise(rawExpenses)} electricityBilledBack={electricityBilledBack} />;
 }
