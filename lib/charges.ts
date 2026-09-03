@@ -433,6 +433,15 @@ export function roomOccupantWeights(
   return weights;
 }
 
+/**
+ * "August 2026, September 2026" - the distinct months a single payment's
+ * allocations touch, deduped and in order. A payment touching more than one
+ * month is an advance, not a plain settle-the-one-bill-it-was-for payment.
+ */
+export function coveredPeriodsLabel(periods: string[]): string {
+  return Array.from(new Set(periods)).sort().map(periodLabel).join(", ");
+}
+
 export const CHARGE_TYPE_LABELS: Record<ChargeType, string> = {
   RENT: "Rent",
   ELECTRICITY: "Electricity",

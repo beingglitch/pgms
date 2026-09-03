@@ -35,6 +35,13 @@ export type TenantInput = {
    * stays on the books as a normal due, same as any other partial payment.
    */
   advancePayment?: number;
+  /**
+   * Per-period ("YYYY-MM") overrides for the rent charges about to be
+   * generated - the calculation stays the same, but the owner can round a
+   * pro-rated first month up (or down) to whatever was actually agreed
+   * before the charge is even created.
+   */
+  rentOverrides?: Record<string, number>;
   rentAmount: number;
   depositAmount: number;
   depositMethod: PaymentMethod;
@@ -218,6 +225,19 @@ export async function createTenant(actor: string, input: TenantInput, agreement:
   // For someone entered today but living here since April, that's April
   // (pro-rated), May, June, ... each as its own charge to settle one by one.
   await generateDueRentCharges(accountId, actor, { revalidate: false });
+
+  // Round a pro-rated (or any other) month up or down to what was actually
+  // agreed, right after it's created and before anything's paid against it -
+  // adjustChargeAmount's paid-amount guard doesn't apply yet, so a plain
+  // update is enough.
+  if (input.rentOverrides) {
+    for (const [period, amount] of Object.entries(input.rentOverrides)) {
+      await prisma.charge.updateMany({
+        where: { tenantId: tenant.id, accountId, type: "RENT", period },
+        data: { amount },
+      });
+    }
+  }
 
   if (input.advancePayment && input.advancePayment > 0) {
     await addLedgerEntry(actor, {

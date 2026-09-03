@@ -27,7 +27,7 @@ import { Amount, Panel, SectionHeading } from "@/components/khata";
 import { BackButton } from "@/components/back-button";
 import { TenantPdfActions } from "@/components/tenant-pdf-actions";
 import { inr, fmtDate, dateISO, paymentMethodLabel, todayISO } from "@/lib/format";
-import { CHARGE_TYPE_LABELS, chargeOutstanding, chargePaid, num, periodLabel, periodOf, summariseCharges } from "@/lib/charges";
+import { CHARGE_TYPE_LABELS, chargeOutstanding, chargePaid, coveredPeriodsLabel, num, periodLabel, periodOf, summariseCharges } from "@/lib/charges";
 import { buildStatement, type Statement, type StatementLine, type StatementMonth } from "@/lib/statement";
 import { type Signature } from "@/lib/messages";
 import { deleteTenant, cancelNotice, setTenantImage } from "@/app/actions/tenants";
@@ -444,20 +444,36 @@ export function TenantDetailClient({
           <p className="py-6 text-center text-sm text-muted-foreground">No payments recorded yet.</p>
         ) : (
           <div>
-            {tenant.ledgerEntries.map((t) => (
-              <div key={t.id} className="khata-row py-2.5">
-                <div className="min-w-0">
-                  <p className="truncate text-[14px] font-semibold capitalize">{t.type.toLowerCase()}</p>
-                  <p className="truncate text-[11.5px] text-muted-foreground">
-                    {t.receiptNo ? <span className="font-mono">{t.receiptNo}</span> : null}
-                    {t.receiptNo ? " · " : ""}
-                    {paymentMethodLabel(t.mode)} · {fmtDate(t.date)}
-                    {t.note ? ` · ${t.note}` : ""}
-                  </p>
+            {tenant.ledgerEntries.map((t) => {
+              const monthsCovered = new Set(t.allocations.map((a) => a.charge.period)).size;
+              const isAdvance = monthsCovered > 1;
+              return (
+                <div key={t.id} className="khata-row py-2.5">
+                  <div className="min-w-0">
+                    <p className="truncate text-[14px] font-semibold capitalize">
+                      {isAdvance ? "Advance payment" : t.type.toLowerCase()}
+                      {isAdvance && (
+                        <Badge variant="outline" className="ml-1.5 border-primary/40 text-[10px] text-primary">
+                          {monthsCovered} months
+                        </Badge>
+                      )}
+                    </p>
+                    <p className="truncate text-[11.5px] text-muted-foreground">
+                      {t.receiptNo ? <span className="font-mono">{t.receiptNo}</span> : null}
+                      {t.receiptNo ? " · " : ""}
+                      {paymentMethodLabel(t.mode)} · {fmtDate(t.date)}
+                      {t.note ? ` · ${t.note}` : ""}
+                    </p>
+                    {isAdvance && (
+                      <p className="truncate text-[11.5px] text-muted-foreground">
+                        Covers {coveredPeriodsLabel(t.allocations.map((a) => a.charge.period))}
+                      </p>
+                    )}
+                  </div>
+                  <span className="khata-amount shrink-0 text-[16px] font-bold">{inr(t.amount)}</span>
                 </div>
-                <span className="khata-amount shrink-0 text-[16px] font-bold">{inr(t.amount)}</span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Panel>

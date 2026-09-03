@@ -6,8 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { CodeInput } from "@/components/code-input";
+import { AuthShell } from "@/components/auth-shell";
 import { suggestUsername, checkUsernameAvailable, signUp } from "@/app/actions/auth";
-import { Building2, Check, Eye, EyeOff, Loader2, ShieldCheck, X } from "lucide-react";
+import { Check, Eye, EyeOff, Loader2, ShieldCheck, X } from "lucide-react";
 
 type Availability = { state: "idle" | "checking" | "available" | "taken" | "invalid"; reason?: string };
 
@@ -69,18 +70,22 @@ export function SignupClient() {
   }
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-gradient-to-b from-muted/60 to-background px-5 py-12">
-      <div className="w-full max-w-sm">
-        <div className="mb-8 flex flex-col items-center text-center">
-          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-card">
-            <Building2 className="h-6 w-6" />
-          </div>
-          <h1 className="font-display text-2xl font-semibold tracking-tight">Set up your property</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Your own isolated space - nobody else can see your data</p>
+    <AuthShell
+      title="Set up in minutes."
+      subtitle="Your own isolated space — tenants, rent, and receipts, organised from day one."
+    >
+      <div className="mb-8 lg:hidden">
+        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary font-display text-base font-semibold text-primary-foreground">
+          PG
         </div>
+      </div>
 
-        {step === "details" ? (
-          <form onSubmit={continueToConfirm} className="space-y-4 rounded-2xl border bg-background p-6 shadow-card">
+      {step === "details" ? (
+        <>
+          <h1 className="font-display text-3xl font-semibold tracking-tight">Set up your property</h1>
+          <p className="mt-2 text-sm text-muted-foreground">Your own isolated space — nobody else can see your data.</p>
+
+          <form onSubmit={continueToConfirm} className="mt-8 space-y-4">
             <div>
               <Label className="mb-1.5" htmlFor="username">
                 Username
@@ -178,7 +183,7 @@ export function SignupClient() {
               )}
             </div>
 
-            <Button type="submit" className="w-full" disabled={!detailsValid}>
+            <Button type="submit" className="w-full" size="lg" disabled={!detailsValid}>
               Continue
             </Button>
 
@@ -188,19 +193,23 @@ export function SignupClient() {
               to this one.
             </p>
 
-            <p className="text-center text-xs text-muted-foreground">
+            <p className="text-center text-sm text-muted-foreground">
               Already have an account?{" "}
               <Link href="/login" className="font-semibold text-primary hover:underline">
                 Sign in
               </Link>
             </p>
           </form>
-        ) : (
-          <div className="space-y-4 rounded-2xl border bg-background p-6 shadow-card">
+        </>
+      ) : (
+        <>
+          <h1 className="font-display text-3xl font-semibold tracking-tight">Confirm your account</h1>
+          <p className="mt-2 text-sm text-muted-foreground">Enter the 6-digit code from whoever manages the hosting.</p>
+
+          <div className="mt-8 space-y-4">
             <div>
               <Label className="mb-1.5">6-digit confirmation code</Label>
               <CodeInput value={code} onChange={setCode} autoFocus />
-              <p className="mt-1 text-xs text-muted-foreground">From whoever manages the hosting.</p>
             </div>
 
             {error && (
@@ -208,16 +217,16 @@ export function SignupClient() {
             )}
 
             <div className="flex gap-3">
-              <Button type="button" variant="outline" className="flex-1" onClick={() => setStep("details")}>
+              <Button type="button" variant="outline" size="lg" className="flex-1" onClick={() => setStep("details")}>
                 Back
               </Button>
-              <Button type="button" className="flex-1" onClick={submit} disabled={pending || code.length !== 6}>
+              <Button type="button" size="lg" className="flex-1" onClick={submit} disabled={pending || code.length !== 6}>
                 {pending ? "Please wait…" : "Create account"}
               </Button>
             </div>
           </div>
-        )}
-      </div>
-    </main>
+        </>
+      )}
+    </AuthShell>
   );
 }

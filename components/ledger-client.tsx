@@ -22,7 +22,7 @@ import { deleteLedgerEntry, listLedger } from "@/app/actions/ledger";
 import { listAllCharges, listOutstandingByTenant, waiveCharge } from "@/app/actions/charges";
 import { deleteExpense, listExpenses } from "@/app/actions/expenses";
 import { listSecurityDeposits } from "@/app/actions/reports";
-import { bucketDuesAging, chargeOutstanding, chargePaid, CHARGE_TYPE_LABELS, num, periodLabel } from "@/lib/charges";
+import { bucketDuesAging, chargeOutstanding, chargePaid, CHARGE_TYPE_LABELS, coveredPeriodsLabel, num, periodLabel } from "@/lib/charges";
 import { AdjustChargeDialog } from "@/components/adjust-charge-dialog";
 import { type Signature } from "@/lib/messages";
 import { useManager } from "@/lib/manager-context";
@@ -716,21 +716,32 @@ function PaymentsTab({
                     fallbackClassName="text-[10px]"
                   />
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold">
-                      {r.data.tenant?.name || "Unknown tenant"}
-                      <Badge variant="outline" className="ml-1.5 capitalize">
-                        {r.data.type.toLowerCase()}
-                      </Badge>
-                    </p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {fmtDate(r.data.date)} · {r.data.mode.replace("_", " ").toLowerCase()}
-                      {r.data.receiptNo ? <span className="serial font-mono"> · {r.data.receiptNo}</span> : null}
-                    </p>
-                    {r.data.allocations.length > 0 && (
-                      <p className="truncate text-[11px] text-muted-foreground">
-                        → {r.data.allocations.map((a) => a.charge.description).join(", ")}
-                      </p>
-                    )}
+                    {(() => {
+                      const monthsCovered = new Set(r.data.allocations.map((a) => a.charge.period)).size;
+                      const isAdvance = monthsCovered > 1;
+                      return (
+                        <>
+                          <p className="truncate text-sm font-semibold">
+                            {r.data.tenant?.name || "Unknown tenant"}
+                            <Badge variant="outline" className={`ml-1.5 capitalize ${isAdvance ? "border-primary/40 text-primary" : ""}`}>
+                              {isAdvance ? `Advance · ${monthsCovered} months` : r.data.type.toLowerCase()}
+                            </Badge>
+                          </p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {fmtDate(r.data.date)} · {r.data.mode.replace("_", " ").toLowerCase()}
+                            {r.data.receiptNo ? <span className="serial font-mono"> · {r.data.receiptNo}</span> : null}
+                          </p>
+                          {r.data.allocations.length > 0 && (
+                            <p className="truncate text-[11px] text-muted-foreground">
+                              {isAdvance ? "Covers " : "→ "}
+                              {isAdvance
+                                ? coveredPeriodsLabel(r.data.allocations.map((a) => a.charge.period))
+                                : r.data.allocations.map((a) => a.charge.description).join(", ")}
+                            </p>
+                          )}
+                        </>
+                      );
+                    })()}
                     {r.data.note && <p className="truncate text-[11px] text-muted-foreground">{r.data.note}</p>}
                   </div>
                 </div>

@@ -19,9 +19,19 @@ import { useManager } from "@/lib/manager-context";
 import { createTenant, updateTenant, updateAgreementFields, type TenantInput, type AgreementInput } from "@/app/actions/tenants";
 import { assignTenantToRoom } from "@/app/actions/rooms";
 import { todayISO, inr, fmtDate } from "@/lib/format";
-import { dayRangeLabel, FULL_ROOM_BED, pendingRentPeriods, periodLabel } from "@/lib/charges";
+import {
+  addPeriods,
+  dayRangeLabel,
+  daysInPeriod,
+  FULL_ROOM_BED,
+  pendingRentPeriods,
+  periodLabel,
+  planAllocations,
+  round2,
+  type RentPeriodPlan,
+} from "@/lib/charges";
 import { waLink } from "@/lib/messaging";
-import { Plus, X, Download, MessageCircle } from "lucide-react";
+import { Plus, X, Download, MessageCircle, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import type { listRoomOptions } from "@/app/actions/rooms";
 
@@ -124,7 +134,20 @@ export function TenantFormDialog({
   const [meterStartReading, setMeterStartReading] = useState("");
   const [meterStartPhotoUrl, setMeterStartPhotoUrl] = useState("");
   const [advancePayment, setAdvancePayment] = useState("");
+  // Period ("YYYY-MM") -> owner-edited amount, for whenever the calculated
+  // rent (a pro-rated first month, say) isn't quite what was actually agreed.
+  const [rentOverrides, setRentOverrides] = useState<Record<string, number>>({});
   const pickedRoom = roomOptions.find((r) => r.id === pickedRoomId) ?? null;
+
+  // What rent will actually land on the books, overrides applied - shared by
+  // the editable preview list and the advance-payment split below it.
+  const billingPlan =
+    isNew && f.rentAmount > 0 && f.joinDate && !isNaN(new Date(f.joinDate).getTime())
+      ? pendingRentPeriods(f.rentAmount, f.joinDate, new Date(), PREVIEW_LEAD_DAYS, new Set()).map((p) => ({
+          ...p,
+          amount: rentOverrides[p.period] ?? p.amount,
+        }))
+      : [];
 
   const availableRooms = roomOptions.filter((r) => r.freeBeds.length > 0 || r.canTakeWholeRoom);
   const floors = Array.from(new Map(availableRooms.map((r) => [r.floorName, r.floorOrder])).entries())
@@ -163,6 +186,7 @@ export function TenantFormDialog({
     setMeterStartReading("");
     setMeterStartPhotoUrl("");
     setAdvancePayment("");
+    setRentOverrides({});
     setSubmitted(false);
   }
 
@@ -217,6 +241,14 @@ export function TenantFormDialog({
       toast.error("Name and phone are required");
       return;
     }
+    if (isNew && !(f.rentAmount > 0)) {
+      toast.error("Set a monthly rent — without it, no rent will ever get billed.");
+      return;
+    }
+    if (isNew && !(f.depositAmount > 0)) {
+      toast.error("Set a deposit amount before onboarding.");
+      return;
+    }
     if (pickedRoomId && !pickedBed) {
       toast.error("Pick which bed (or the whole room)");
       return;
@@ -246,6 +278,7 @@ export function TenantFormDialog({
             meterStartReading: meterStartReading !== "" ? Number(meterStartReading) : undefined,
             meterStartPhotoUrl: meterStartPhotoUrl || undefined,
             advancePayment: advancePayment !== "" ? Number(advancePayment) : undefined,
+            rentOverrides: Object.keys(rentOverrides).length > 0 ? rentOverrides : undefined,
           },
           { ...agreement, roomNumber: f.roomNumber, rentAmount: f.rentAmount, depositAmount: f.depositAmount }
         );
@@ -523,11 +556,21 @@ export function TenantFormDialog({
                   Settles the oldest month first (their join month), then the next. Anything short stays due on
                   the dashboard.
                 </p>
+                <AdvanceSplitPreview
+                  plan={billingPlan}
+                  advance={advancePayment === "" ? 0 : Number(advancePayment)}
+                  monthlyRent={f.rentAmount}
+                />
               </Field>
             )}
           </div>
 
-          {isNew && <BillingPreview rentAmount={f.rentAmount} joinDate={f.joinDate} />}
+          {isNew && (
+            <BillingPreview
+              plan={billingPlan}
+              onEdit={(period, amount) => setRentOverrides((o) => ({ ...o, [period]: amount }))}
+            />
+          )}
 
           <p className="text-xs font-bold uppercase tracking-wide text-amber-700">Security deposit</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -713,23 +756,31 @@ const PREVIEW_MAX_ROWS = 6;
  * saved: the join month pro-rated, then one full month each up to the lead
  * window. Someone entered today but living here since April sees April
  * through the current month listed, each to be settled on its own.
+ *
+ * Each amount is editable in place - the calculation stays the same, but a
+ * pro-rated first month (or any other) can be rounded to whatever was
+ * actually agreed before the charge is even created.
  */
-function BillingPreview({ rentAmount, joinDate }: { rentAmount: number; joinDate: string }) {
-  const join = new Date(joinDate);
-  if (!(rentAmount > 0) || !joinDate || isNaN(join.getTime())) return null;
+function BillingPreview({
+  plan,
+  onEdit,
+}: {
+  plan: RentPeriodPlan[];
+  onEdit: (period: string, amount: number) => void;
+}) {
+  const [editing, setEditing] = useState<string | null>(null);
+  if (plan.length === 0) return null;
 
-  const plans = pendingRentPeriods(rentAmount, joinDate, new Date(), PREVIEW_LEAD_DAYS, new Set());
-  if (plans.length === 0) return null;
-
-  const visible = plans.slice(0, PREVIEW_MAX_ROWS);
-  const hidden = plans.length - visible.length;
+  const visible = plan.slice(0, PREVIEW_MAX_ROWS);
+  const hidden = plan.length - visible.length;
 
   return (
     <div className="rounded-xl border border-border bg-muted/30 p-3">
       <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Rent that will be created on save</p>
       <p className="mb-2 mt-1 text-xs text-muted-foreground">
         Rent is per calendar month. The month they join is charged from the day after joining; every month after
-        that is due on the 1st and appears {PREVIEW_LEAD_DAYS} days before.
+        that is due on the 1st and appears {PREVIEW_LEAD_DAYS} days before. Not quite what was agreed? Tap an
+        amount to change it.
       </p>
       <div className="divide-y divide-border/70">
         {visible.map((p) => (
@@ -744,11 +795,110 @@ function BillingPreview({ rentAmount, joinDate }: { rentAmount: number; joinDate
               )}
               <span className="text-muted-foreground"> · due {fmtDate(p.dueDate)}</span>
             </span>
-            <span className="tabular shrink-0 font-semibold">{inr(p.amount)}</span>
+            {editing === p.period ? (
+              <Input
+                type="number"
+                min={0}
+                autoFocus
+                defaultValue={p.amount}
+                className="h-7 w-24 shrink-0 px-2 text-right text-sm"
+                onBlur={(e) => {
+                  const v = Number(e.target.value);
+                  if (Number.isFinite(v) && v >= 0) onEdit(p.period, v);
+                  setEditing(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                  if (e.key === "Escape") setEditing(null);
+                }}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setEditing(p.period)}
+                className="flex shrink-0 items-center gap-1 font-semibold hover:text-primary"
+              >
+                {inr(p.amount)}
+                <Pencil className="h-3 w-3 text-muted-foreground" />
+              </button>
+            )}
           </div>
         ))}
       </div>
       {hidden > 0 && <p className="mt-1.5 text-xs text-muted-foreground">+{hidden} more month{hidden === 1 ? "" : "s"}</p>}
+    </div>
+  );
+}
+
+/**
+ * "1 month, 12 days" - how far a leftover amount reaches at the tenant's
+ * normal monthly rate, counting on from whatever period the shown plan
+ * already covers. Whole months first, then whatever fraction of the next
+ * month's actual day count the remainder buys.
+ */
+function coverageDuration(amount: number, monthlyRent: number, fromPeriod: string): string {
+  if (!(monthlyRent > 0) || !(amount > 0)) return "";
+  let remaining = amount;
+  let months = 0;
+  let period = fromPeriod;
+  while (remaining >= monthlyRent - 0.005) {
+    remaining = round2(remaining - monthlyRent);
+    months++;
+    period = addPeriods(period, 1);
+  }
+  const days = remaining > 0.5 ? Math.round((remaining / monthlyRent) * daysInPeriod(period)) : 0;
+
+  const parts: string[] = [];
+  if (months > 0) parts.push(`${months} month${months === 1 ? "" : "s"}`);
+  if (days > 0) parts.push(`${days} day${days === 1 ? "" : "s"}`);
+  return parts.join(", ");
+}
+
+/**
+ * How an advance payment (whatever number's typed into that field) would
+ * settle against the rent above, oldest month first - same order the real
+ * payment allocation uses once the charges actually exist, so what's shown
+ * here is what will actually happen on save.
+ */
+function AdvanceSplitPreview({
+  plan,
+  advance,
+  monthlyRent,
+}: {
+  plan: RentPeriodPlan[];
+  advance: number;
+  monthlyRent: number;
+}) {
+  if (!(advance > 0) || plan.length === 0) return null;
+  const { allocations, unallocated } = planAllocations(
+    advance,
+    plan.map((p) => ({ id: p.period, amount: p.amount, waived: false, allocations: [] }))
+  );
+  if (allocations.length === 0) return null;
+
+  const duration = unallocated > 0.005 ? coverageDuration(unallocated, monthlyRent, plan[plan.length - 1].period) : "";
+
+  return (
+    <div className="mt-2 space-y-1 rounded-lg border border-border bg-background p-2.5 text-xs">
+      <p className="font-semibold text-muted-foreground">This splits as:</p>
+      {allocations.map((a) => {
+        const row = plan.find((p) => p.period === a.chargeId)!;
+        const partial = a.amount < row.amount - 0.005;
+        return (
+          <div key={a.chargeId} className="flex items-center justify-between">
+            <span>{periodLabel(row.period)}</span>
+            <span className="font-semibold">
+              {inr(a.amount)}
+              {partial && <span className="ml-1 font-normal text-muted-foreground">of {inr(row.amount)}</span>}
+            </span>
+          </div>
+        );
+      })}
+      {unallocated > 0.005 && (
+        <p className="border-t border-border/70 pt-1 text-primary">
+          Remaining {inr(unallocated)} can be settled in {duration || "under a day"} more, once billed.
+        </p>
+      )}
     </div>
   );
 }
