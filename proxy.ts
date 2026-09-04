@@ -33,9 +33,8 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Everything except Next internals, the icons/manifest a PWA needs
-    // before sign-in, and static illustration assets the login/signup
-    // pages themselves need to render before anyone's signed in.
-    "/((?!_next/static|_next/image|icon|apple-icon|manifest.webmanifest|favicon.ico|mascot/).*)",
+    // Everything except Next internals and the icons/manifest a PWA needs
+    // before sign-in.
+    "/((?!_next/static|_next/image|icon|apple-icon|manifest.webmanifest|favicon.ico).*)",
   ],
 };

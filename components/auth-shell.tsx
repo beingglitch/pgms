@@ -1,5 +1,3 @@
-import Image from "next/image";
-
 /**
  * Split-panel frame shared by /login and /signup: a dark, colour-washed
  * brand panel on wide screens (hidden on mobile, where the form alone is
@@ -33,15 +31,6 @@ export function AuthShell({
           <h2 className="font-display text-4xl font-semibold leading-[1.15] tracking-tight">{title}</h2>
           <p className="mt-4 text-base text-white/65">{subtitle}</p>
         </div>
-
-        <Image
-          src="/mascot/hero-wave.png"
-          alt=""
-          width={420}
-          height={420}
-          className="pointer-events-none absolute -bottom-8 -right-10 h-64 w-64 object-contain drop-shadow-2xl xl:h-80 xl:w-80"
-          priority
-        />
 
         <p className="relative text-xs font-medium tracking-wide text-white/35">
           TENANTS · LEDGER · ELECTRICITY · REMINDERS
