@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
+import Image from "next/image";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -11,7 +12,7 @@ import { PhotoUpload } from "@/components/photo-upload";
 import { saveOnboardingProperty, saveOnboardingBilling, finishOnboarding } from "@/app/actions/onboarding";
 import { createFloor, createRoom } from "@/app/actions/rooms";
 import { toast } from "sonner";
-import { ArrowRight, Building2, Home, Zap } from "lucide-react";
+import { ArrowRight, Zap } from "lucide-react";
 
 const ACTOR = "Owner";
 
@@ -55,6 +56,7 @@ export function OnboardingClient({ pgInfo, floorCount }: { pgInfo: PgInfo; floor
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [finished, setFinished] = useState(false);
 
   const [name, setName] = useState(pgInfo.name === "My PG" ? "" : pgInfo.name);
   const [address, setAddress] = useState(pgInfo.address);
@@ -104,7 +106,7 @@ export function OnboardingClient({ pgInfo, floorCount }: { pgInfo: PgInfo; floor
     setBusy(true);
     try {
       await finishOnboarding(ACTOR);
-      router.push("/");
+      setFinished(true);
       router.refresh();
     } finally {
       setBusy(false);
@@ -143,6 +145,21 @@ export function OnboardingClient({ pgInfo, floorCount }: { pgInfo: PgInfo; floor
     }
   }
 
+  if (finished) {
+    return (
+      <main className="flex min-h-dvh items-center justify-center bg-gradient-to-b from-muted/60 to-background px-5 py-12">
+        <div className="flex w-full max-w-md flex-col items-center text-center">
+          <Image src="/mascot/success-confetti.png" alt="" width={280} height={280} className="h-48 w-48 object-contain" priority />
+          <h1 className="font-display text-2xl font-semibold tracking-tight">You&apos;re all set!</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Your property&apos;s ready. Add tenants, rooms, and more anytime.</p>
+          <Button className="mt-6 w-full" onClick={() => router.push("/")}>
+            Go to dashboard <ArrowRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="flex min-h-dvh items-center justify-center bg-gradient-to-b from-muted/60 to-background px-5 py-12">
       <div className="w-full max-w-md">
@@ -173,7 +190,7 @@ export function OnboardingClient({ pgInfo, floorCount }: { pgInfo: PgInfo; floor
           {step === 0 && (
             <>
               <div className="flex items-center gap-2">
-                <Building2 className="h-4 w-4 text-muted-foreground" />
+                <Image src="/mascot/welcome-box.png" alt="" width={72} height={72} className="h-9 w-9 object-contain" />
                 <p className="font-display text-base font-semibold tracking-tight">Property</p>
               </div>
               <div>
@@ -181,7 +198,10 @@ export function OnboardingClient({ pgInfo, floorCount }: { pgInfo: PgInfo; floor
                 <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Green Valley PG" />
               </div>
               <div>
-                <Label className="mb-1.5">Location (optional)</Label>
+                <div className="mb-1.5 flex items-center gap-1.5">
+                  <Image src="/mascot/location-map.png" alt="" width={56} height={56} className="h-6 w-6 object-contain" />
+                  <Label>Location (optional)</Label>
+                </div>
                 <LocationPicker
                   latitude={latitude}
                   longitude={longitude}
@@ -276,7 +296,7 @@ export function OnboardingClient({ pgInfo, floorCount }: { pgInfo: PgInfo; floor
           {step === 2 && (
             <>
               <div className="flex items-center gap-2">
-                <Home className="h-4 w-4 text-muted-foreground" />
+                <Image src="/mascot/rooms-key.png" alt="" width={72} height={72} className="h-9 w-9 object-contain" />
                 <p className="font-display text-base font-semibold tracking-tight">Rooms</p>
               </div>
               <p className="text-xs text-muted-foreground">
