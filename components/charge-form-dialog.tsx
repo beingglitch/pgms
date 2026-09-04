@@ -59,11 +59,13 @@ export function ChargeFormDialog({
   async function save() {
     if (electricityMode) {
       if (!elec.room || !elec.estimate) return toast.error("Enter valid readings to bill.");
+      if (!elec.endPhotoUrl) return toast.error("Add a photo of the meter as proof of this reading.");
       setBusy(true);
       const result = await recordElectricityCharge(manager, {
         roomId: roomId!,
         startReading: Number(elec.startReading),
         endReading: Number(elec.endReading),
+        endPhotoUrl: elec.endPhotoUrl,
         startDate: elec.room.openReading ? undefined : elec.startDateInput,
         dueDate,
       });
@@ -160,7 +162,7 @@ export function ChargeFormDialog({
             </>
           )}
 
-          <Button onClick={save} disabled={busy || (electricityMode && !elec.estimate)} className="w-full">
+          <Button onClick={save} disabled={busy || (electricityMode && (!elec.estimate || !elec.endPhotoUrl))} className="w-full">
             {electricityMode ? "Bill electricity" : "Add charge"}
           </Button>
           <p className="text-xs text-muted-foreground">

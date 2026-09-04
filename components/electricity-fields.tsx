@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PhotoUpload } from "@/components/photo-upload";
 import { getRoomElectricityContext } from "@/app/actions/electricity";
 import { inr, fmtDate, todayISO } from "@/lib/format";
 import { round2, roomOccupantWeights, splitByWeights } from "@/lib/charges";
@@ -23,6 +24,7 @@ export function useElectricityFields(roomId: string | null | undefined, active: 
   const [startReading, setStartReading] = useState("");
   const [startDateInput, setStartDateInput] = useState(todayISO());
   const [endReading, setEndReading] = useState("");
+  const [endPhotoUrl, setEndPhotoUrl] = useState("");
 
   useEffect(() => {
     if (!active || !roomId) return;
@@ -33,6 +35,7 @@ export function useElectricityFields(roomId: string | null | undefined, active: 
       setManualStart(!r.openReading);
       setStartReading(r.openReading ? String(r.openReading.startReading) : "");
       setEndReading("");
+      setEndPhotoUrl("");
       setStartDateInput(todayISO());
     });
     return () => {
@@ -82,13 +85,27 @@ export function useElectricityFields(roomId: string | null | undefined, active: 
     setStartDateInput,
     endReading,
     setEndReading,
+    endPhotoUrl,
+    setEndPhotoUrl,
     estimate,
   };
 }
 
 export function ElectricityReadingFields({ fields }: { fields: ReturnType<typeof useElectricityFields> }) {
-  const { room, manualStart, toggleManualStart, startReading, setStartReading, startDateInput, setStartDateInput, endReading, setEndReading, estimate } =
-    fields;
+  const {
+    room,
+    manualStart,
+    toggleManualStart,
+    startReading,
+    setStartReading,
+    startDateInput,
+    setStartDateInput,
+    endReading,
+    setEndReading,
+    endPhotoUrl,
+    setEndPhotoUrl,
+    estimate,
+  } = fields;
 
   if (!room) {
     return <p className="text-sm text-muted-foreground">Loading the room&apos;s meter…</p>;
@@ -96,7 +113,7 @@ export function ElectricityReadingFields({ fields }: { fields: ReturnType<typeof
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <div className="mb-1.5 flex items-center justify-between gap-2">
             <Label>Starting reading</Label>
@@ -123,6 +140,16 @@ export function ElectricityReadingFields({ fields }: { fields: ReturnType<typeof
           <Input type="number" value={endReading} onChange={(e) => setEndReading(e.target.value)} />
         </div>
       </div>
+
+      {endReading !== "" && (
+        <div>
+          <Label className="mb-1.5">
+            Meter photo <span className="text-destructive">*</span>
+          </Label>
+          <PhotoUpload value={endPhotoUrl} onChange={setEndPhotoUrl} label="Add meter photo" />
+          <p className="mt-1 text-xs text-muted-foreground">Proof of this reading - carries over as the next cycle&apos;s starting photo too.</p>
+        </div>
+      )}
 
       {!room.openReading && (
         <div>

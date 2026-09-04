@@ -427,6 +427,8 @@ export async function checkoutTenant(
     refundChequeNumber?: string;
     /** Current number on the room's open meter reading, if the owner read it as part of checkout. */
     finalMeterReading?: number;
+    /** Proof photo of that same number, required whenever a reading is entered. */
+    finalMeterPhotoUrl?: string;
   }
 ) {
   const accountId = await requireAccountId();
@@ -439,7 +441,9 @@ export async function checkoutTenant(
   // as a normal unpaid charge below, split with whoever else is still there.
   if (input.finalMeterReading !== undefined && tenant.roomId) {
     const open = await getOpenReadingForRoom(tenant.roomId);
-    if (open) await closeElectricityReading(actor, open.id, input.finalMeterReading, input.checkoutDate);
+    if (open) {
+      await closeElectricityReading(actor, open.id, input.finalMeterReading, input.checkoutDate, input.finalMeterPhotoUrl);
+    }
   }
 
   // Anything still on their account comes out of the deposit first, recorded as

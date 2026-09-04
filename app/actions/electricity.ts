@@ -112,8 +112,19 @@ export async function resetElectricityIfRoomEmpty(actor: string, roomId: string)
  * number and today's rate: without this, a room would only ever get one
  * reading in its whole life, since starting a fresh one is otherwise
  * onboarding-only. "Continuous" is the point, not "restart every time".
+ *
+ * `endPhotoUrl` - proof of the number just read - becomes the *new* cycle's
+ * starting photo, not the one being closed: it's proof of the same number
+ * either way, and the closed reading keeps whatever photo it already had
+ * from when it was opened.
  */
-export async function closeElectricityReading(actor: string, billId: string, endReading: number, endDate: string) {
+export async function closeElectricityReading(
+  actor: string,
+  billId: string,
+  endReading: number,
+  endDate: string,
+  endPhotoUrl?: string
+) {
   const accountId = await requireAccountId();
   const bill = await prisma.electricityBill.findFirst({
     where: { id: billId, accountId },
@@ -141,6 +152,7 @@ export async function closeElectricityReading(actor: string, billId: string, end
         startReading: endReading,
         startDate: new Date(endDate),
         ratePerUnit: pgInfo.electricityRatePerUnit,
+        photoUrl: endPhotoUrl,
         recordedBy: actor,
       },
     });
@@ -189,7 +201,14 @@ export async function getRoomElectricityContext(roomId: string) {
  */
 export async function recordElectricityCharge(
   actor: string,
-  input: { roomId: string; startReading: number; endReading: number; startDate?: string; dueDate: string }
+  input: {
+    roomId: string;
+    startReading: number;
+    endReading: number;
+    startDate?: string;
+    dueDate: string;
+    endPhotoUrl?: string;
+  }
 ) {
   const accountId = await requireAccountId();
   await prisma.room.findFirstOrThrow({ where: { id: input.roomId, accountId } });
@@ -217,7 +236,7 @@ export async function recordElectricityCharge(
     });
   }
 
-  return closeElectricityReading(actor, bill.id, input.endReading, input.dueDate);
+  return closeElectricityReading(actor, bill.id, input.endReading, input.dueDate, input.endPhotoUrl);
 }
 
 /**

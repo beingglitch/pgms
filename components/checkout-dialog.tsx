@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { PhotoUpload } from "@/components/photo-upload";
 import { Plus, X } from "lucide-react";
 import { checkoutTenant, type CheckoutDeductionInput, type PaymentMethod } from "@/app/actions/tenants";
 import { getCheckoutSettlement } from "@/app/actions/reports";
@@ -32,6 +33,7 @@ export function CheckoutDialog({
   const { manager } = useManager();
   const [checkoutDate, setCheckoutDate] = useState(todayISO());
   const [finalReading, setFinalReading] = useState("");
+  const [finalMeterPhotoUrl, setFinalMeterPhotoUrl] = useState("");
   const [deductions, setDeductions] = useState<CheckoutDeductionInput[]>([]);
   const [refundMethod, setRefundMethod] = useState<PaymentMethod>(tenant.depositMethod as PaymentMethod);
   const [refundChequeNumber, setRefundChequeNumber] = useState("");
@@ -86,6 +88,9 @@ export function CheckoutDialog({
   const refund = round2(Number(tenant.depositAmount) - totalOwed - totalDeductions);
 
   async function submit() {
+    if (finalReading !== "" && !finalMeterPhotoUrl) {
+      return toast.error("Add a photo of the meter as proof of this reading.");
+    }
     setSaving(true);
     try {
       await checkoutTenant(manager, tenant.id, {
@@ -94,6 +99,7 @@ export function CheckoutDialog({
         refundMethod,
         refundChequeNumber: refundMethod === "CHEQUE" ? refundChequeNumber : undefined,
         finalMeterReading: finalReading !== "" ? Number(finalReading) : undefined,
+        finalMeterPhotoUrl: finalReading !== "" ? finalMeterPhotoUrl : undefined,
       });
       toast.success(refund >= 0 ? "Checkout complete, refund recorded" : "Checkout complete, amount owed recorded");
       onOpenChange(false);
@@ -156,6 +162,14 @@ export function CheckoutDialog({
                     onChange={(e) => setFinalReading(e.target.value)}
                   />
                 </div>
+                {finalReading !== "" && (
+                  <div className="mt-2">
+                    <Label className="mb-1 text-xs">
+                      Meter photo <span className="text-destructive">*</span>
+                    </Label>
+                    <PhotoUpload value={finalMeterPhotoUrl} onChange={setFinalMeterPhotoUrl} label="Add meter photo" />
+                  </div>
+                )}
                 {electricityEstimate && (
                   <div className="mt-2 flex items-center justify-between text-sm">
                     <span>

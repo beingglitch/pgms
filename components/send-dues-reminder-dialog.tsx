@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { MessageCircle, Mail, Copy, Plus, Zap } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { MessageCircle, Mail, Copy, Plus, RotateCcw, Zap } from "lucide-react";
 import { getTenantDues, addManualCharge } from "@/app/actions/charges";
 import { recordElectricityCharge } from "@/app/actions/electricity";
 import { useElectricityFields, ElectricityReadingFields } from "@/components/electricity-fields";
@@ -51,12 +53,17 @@ export function SendDuesReminderDialog({
   signature: Signature;
   paymentLink?: string;
 }) {
+  const router = useRouter();
   const { manager } = useManager();
   const [dues, setDues] = useState<TenantDues | null>(null);
   const [extraDescription, setExtraDescription] = useState("");
   const [extraAmount, setExtraAmount] = useState("");
   const [addingExtra, setAddingExtra] = useState(false);
   const [closingReading, setClosingReading] = useState(false);
+  // null means "keep following whatever's auto-generated"; once the owner
+  // types into the message box directly, their edit wins from then on, even
+  // as a charge gets added underneath it.
+  const [messageOverride, setMessageOverride] = useState<string | null>(null);
   const elec = useElectricityFields(roomId, open, todayISO());
 
   // Reset the form the moment the dialog opens. Adjusted during render, from
@@ -69,11 +76,17 @@ export function SendDuesReminderDialog({
       setDues(null);
       setExtraDescription("");
       setExtraAmount("");
+      setMessageOverride(null);
     }
   }
 
   async function refresh() {
     setDues(await getTenantDues(tenantId));
+    // Charges added here show up in the Ledger and on the tenant's own page
+    // too - revalidatePath inside the actions marks those routes stale, but
+    // this tells the router to actually pick that up right away rather than
+    // waiting for the next navigation to notice.
+    router.refresh();
   }
 
   // The fetch itself lives here, since loading a tenant's dues on open is
@@ -92,12 +105,14 @@ export function SendDuesReminderDialog({
 
   async function closeReading() {
     if (!elec.room || !elec.estimate) return toast.error("Enter valid readings.");
+    if (!elec.endPhotoUrl) return toast.error("Add a photo of the meter as proof of this reading.");
 
     setClosingReading(true);
     const result = await recordElectricityCharge(manager, {
       roomId: roomId!,
       startReading: Number(elec.startReading),
       endReading: Number(elec.endReading),
+      endPhotoUrl: elec.endPhotoUrl,
       startDate: elec.room.openReading ? undefined : elec.startDateInput,
       dueDate: todayISO(),
     });
@@ -142,7 +157,11 @@ export function SendDuesReminderDialog({
   }
 
   const message = buildDuesMessage({ name: tenantName, roomLabel }, dues.open, signature);
-  const fullMessage = paymentLink ? `${message}\n\npay here: ${paymentLink}` : message;
+  const autoMessage = paymentLink ? `${message}\n\npay here: ${paymentLink}` : message;
+  // What actually goes out: the owner's own edit if they've made one, the
+  // freshly-generated text otherwise - and every send/copy action below
+  // reads this one value, so an edit here is what gets used everywhere.
+  const fullMessage = messageOverride ?? autoMessage;
 
   async function markSent(channel: "whatsapp" | "email") {
     await recordReminderSent(manager, {
@@ -164,7 +183,7 @@ export function SendDuesReminderDialog({
           <div className="rounded-xl border border-border bg-muted/30 p-3">
             {dues.open.map((c) => (
               <KhataRow key={c.id} className="py-1.5" amount={<Amount value={chargeOutstanding(c)} tone="owed" size="sm" />}>
-                <p className="truncate text-sm">
+                <p className="break-words text-sm">
                   <span className="text-xs font-semibold text-muted-foreground">{CHARGE_TYPE_LABELS[c.type]}:</span>{" "}
                   {c.description}
                 </p>
@@ -188,7 +207,7 @@ export function SendDuesReminderDialog({
                 size="sm"
                 variant="secondary"
                 onClick={closeReading}
-                disabled={closingReading || !elec.estimate}
+                disabled={closingReading || !elec.estimate || !elec.endPhotoUrl}
                 className="w-full"
               >
                 Add charge
@@ -201,28 +220,47 @@ export function SendDuesReminderDialog({
           <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
             Add an extra charge before sending
           </p>
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row">
             <Input
               placeholder="e.g. Late fee"
               value={extraDescription}
               onChange={(e) => setExtraDescription(e.target.value)}
-              className="flex-1"
+              className="min-w-0 flex-1"
             />
-            <Input
-              type="number"
-              placeholder="Amount"
-              value={extraAmount}
-              onChange={(e) => setExtraAmount(e.target.value)}
-              className="w-24"
-            />
-            <Button size="icon" variant="secondary" onClick={addExtra} disabled={addingExtra}>
-              <Plus className="h-4 w-4" />
-            </Button>
+            <div className="flex gap-2">
+              <Input
+                type="number"
+                placeholder="Amount"
+                value={extraAmount}
+                onChange={(e) => setExtraAmount(e.target.value)}
+                className="w-24"
+              />
+              <Button size="icon" variant="secondary" onClick={addExtra} disabled={addingExtra} className="shrink-0">
+                <Plus className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         </div>
 
-        <div className="whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/40 p-3 text-sm">
-          {fullMessage}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Message</p>
+            {messageOverride !== null && (
+              <button
+                type="button"
+                onClick={() => setMessageOverride(null)}
+                className="flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline"
+              >
+                <RotateCcw className="h-3 w-3" /> Reset to auto-generated
+              </button>
+            )}
+          </div>
+          <Textarea
+            value={fullMessage}
+            onChange={(e) => setMessageOverride(e.target.value)}
+            rows={6}
+            className="text-sm"
+          />
         </div>
 
         <div className="flex flex-col gap-2 pt-1">
