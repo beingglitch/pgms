@@ -60,13 +60,18 @@ export function ChargeFormDialog({
     if (electricityMode) {
       if (!elec.room || !elec.estimate) return toast.error("Enter valid readings to bill.");
       if (!elec.endPhotoUrl) return toast.error("Add a photo of the meter as proof of this reading.");
+      if (!elec.room.openReading && !elec.startPhotoUrl) {
+        return toast.error("Add a photo of the meter as proof of the starting reading.");
+      }
       setBusy(true);
       const result = await recordElectricityCharge(manager, {
         roomId: roomId!,
         startReading: Number(elec.startReading),
         endReading: Number(elec.endReading),
         endPhotoUrl: elec.endPhotoUrl,
+        startPhotoUrl: elec.room.openReading ? undefined : elec.startPhotoUrl,
         startDate: elec.room.openReading ? undefined : elec.startDateInput,
+        rateOverride: elec.rateOverride !== "" ? Number(elec.rateOverride) : undefined,
         dueDate,
       });
       setBusy(false);
@@ -130,7 +135,7 @@ export function ChargeFormDialog({
 
           {electricityMode ? (
             <>
-              <ElectricityReadingFields fields={elec} />
+              <ElectricityReadingFields fields={elec} tenantId={tenantId} />
               {elec.room && (
                 <div>
                   <Label className="mb-1.5">Closing date</Label>
@@ -162,7 +167,15 @@ export function ChargeFormDialog({
             </>
           )}
 
-          <Button onClick={save} disabled={busy || (electricityMode && (!elec.estimate || !elec.endPhotoUrl))} className="w-full">
+          <Button
+            onClick={save}
+            disabled={
+              busy ||
+              (electricityMode &&
+                (!elec.estimate || !elec.endPhotoUrl || (!elec.room?.openReading && !elec.startPhotoUrl)))
+            }
+            className="w-full"
+          >
             {electricityMode ? "Bill electricity" : "Add charge"}
           </Button>
           <p className="text-xs text-muted-foreground">

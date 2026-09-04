@@ -51,3 +51,62 @@ export async function getReminderHistory(limit = 40) {
 
   return { logs, lastSentByTenant: Object.fromEntries(lastSentByTenant) };
 }
+
+/**
+ * A standalone reminder the owner sets themselves - "renew Ramesh's
+ * agreement", "collect signature", anything that isn't a dues charge and so
+ * has no other place in the app to live. A tenant is optional: a property-
+ * wide errand needs one too.
+ */
+export async function createReminder(
+  actor: string,
+  input: { tenantId?: string; type: "RENT" | "ELECTRICITY" | "OTHER"; title: string; dueDate: string; amount?: number; note?: string }
+) {
+  const accountId = await requireAccountId();
+  if (input.tenantId) await prisma.tenant.findFirstOrThrow({ where: { id: input.tenantId, accountId } });
+
+  const reminder = await prisma.reminder.create({
+    data: {
+      accountId,
+      tenantId: input.tenantId,
+      type: input.type,
+      title: input.title.trim(),
+      dueDate: new Date(input.dueDate),
+      amount: input.amount,
+      note: input.note,
+      createdBy: actor,
+    },
+  });
+  await logActivity(accountId, actor, "Reminder created", reminder.title);
+  revalidatePath("/reminders");
+  if (input.tenantId) revalidatePath(`/tenants/${input.tenantId}`);
+  return reminder;
+}
+
+/** Custom reminders still open, newest due first - and each tenant's own too, for their profile page. */
+export async function listPendingReminders() {
+  const accountId = await requireAccountId();
+  return prisma.reminder.findMany({
+    where: { accountId, status: "PENDING" },
+    orderBy: { dueDate: "asc" },
+    include: { tenant: { select: { id: true, name: true, photoUrl: true } } },
+  });
+}
+
+export async function completeReminder(actor: string, id: string) {
+  const accountId = await requireAccountId();
+  const reminder = await prisma.reminder.findFirstOrThrow({ where: { id, accountId } });
+  await prisma.reminder.update({ where: { id }, data: { status: "DONE" } });
+  await logActivity(accountId, actor, "Reminder completed", reminder.title);
+  revalidatePath("/reminders");
+  if (reminder.tenantId) revalidatePath(`/tenants/${reminder.tenantId}`);
+}
+
+export async function deleteReminder(actor: string, id: string) {
+  const accountId = await requireAccountId();
+  const reminder = await prisma.reminder.findFirstOrThrow({ where: { id, accountId } });
+  await prisma.reminder.delete({ where: { id } });
+  await logActivity(accountId, actor, "Reminder deleted", reminder.title);
+  revalidatePath("/reminders");
+  if (reminder.tenantId) revalidatePath(`/tenants/${reminder.tenantId}`);
+}

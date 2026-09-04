@@ -32,6 +32,8 @@ import { buildStatement, type Statement, type StatementLine, type StatementMonth
 import { type Signature } from "@/lib/messages";
 import { deleteTenant, cancelNotice, setTenantImage } from "@/app/actions/tenants";
 import { deleteElectricityBill, setMeterPhoto } from "@/app/actions/electricity";
+import { completeReminder, deleteReminder } from "@/app/actions/reminders";
+import { ReminderFormDialog } from "@/components/reminder-form-dialog";
 import { useManager } from "@/lib/manager-context";
 import { TenantFormDialog } from "@/components/tenant-form-dialog";
 import { CheckoutDialog } from "@/components/checkout-dialog";
@@ -81,6 +83,19 @@ export function TenantDetailClient({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [shareMsg, setShareMsg] = useState<{ title: string; subject: string; message: string } | null>(null);
   const [duesReminderOpen, setDuesReminderOpen] = useState(false);
+  const [addingReminder, setAddingReminder] = useState(false);
+
+  async function markReminderDone(id: string) {
+    await completeReminder(manager, id);
+    toast.success("Reminder done");
+    router.refresh();
+  }
+
+  async function removeReminder(id: string) {
+    await deleteReminder(manager, id);
+    toast.success("Reminder removed");
+    router.refresh();
+  }
 
   // Change/Delete from inside the image viewer, for the tenant's own photos.
   function imageActions(field: "photoUrl" | "aadhaarFrontUrl" | "aadhaarBackUrl") {
@@ -361,16 +376,41 @@ export function TenantDetailClient({
           </div>
         )}
 
-        {tenant.reminders.length > 0 && (
-          <div className="mb-4">
-            <SectionHeading>Pending reminders</SectionHeading>
-            {tenant.reminders.map((r) => (
-              <p key={r.id} className="text-sm">
-                • {r.title}, due {fmtDate(r.dueDate)}
-              </p>
-            ))}
-          </div>
-        )}
+        <div className="mb-4">
+          <SectionHeading
+            action={
+              <button
+                type="button"
+                onClick={() => setAddingReminder(true)}
+                className="text-[11px] font-semibold text-primary hover:underline"
+              >
+                + Add
+              </button>
+            }
+          >
+            Pending reminders
+          </SectionHeading>
+          {tenant.reminders.length === 0 ? (
+            <p className="text-xs text-muted-foreground">Nothing set aside for this tenant.</p>
+          ) : (
+            tenant.reminders.map((r) => (
+              <div key={r.id} className="flex items-center justify-between gap-2 py-1">
+                <p className="min-w-0 truncate text-sm">
+                  • {r.title}, due {fmtDate(r.dueDate)}
+                  {r.note ? ` · ${r.note}` : ""}
+                </p>
+                <div className="flex shrink-0 items-center gap-2 text-[11px] font-semibold">
+                  <button onClick={() => markReminderDone(r.id)} className="text-primary hover:underline">
+                    Done
+                  </button>
+                  <button onClick={() => removeReminder(r.id)} className="text-destructive hover:underline">
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
 
         {tenant.electricityBills.length > 0 && (
           <div className="mb-4">
@@ -610,6 +650,13 @@ export function TenantDetailClient({
           paymentLink={paymentLink}
         />
       )}
+
+      <ReminderFormDialog
+        open={addingReminder}
+        onOpenChange={setAddingReminder}
+        tenantOptions={[]}
+        defaultTenantId={tenant.id}
+      />
 
       {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setConfirmDelete(false)}>

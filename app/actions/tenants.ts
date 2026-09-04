@@ -376,6 +376,18 @@ export async function updateAgreementFields(actor: string, tenantId: string, fie
   revalidatePath(`/tenants/${tenantId}`);
 }
 
+/** Just this tenant's own electricity rate, for editing it inline wherever a reading gets billed. */
+export async function updateTenantElectricityRate(actor: string, tenantId: string, rate: number) {
+  const accountId = await requireAccountId();
+  await prisma.tenant.findFirstOrThrow({ where: { id: tenantId, accountId } });
+  const current = await prisma.agreement.findFirst({ where: { tenantId }, orderBy: { version: "desc" } });
+  if (!current) return;
+
+  await prisma.agreement.update({ where: { id: current.id }, data: { electricityRate: rate } });
+  await logActivity(accountId, actor, "Electricity rate updated", `Tenant's own rate → ₹${rate}/unit`);
+  revalidatePath(`/tenants/${tenantId}`);
+}
+
 export type CheckoutDeductionInput = { reason: string; amount: number; category?: string };
 
 /**

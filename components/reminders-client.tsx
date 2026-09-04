@@ -6,10 +6,11 @@ import Link from "next/link";
 import { ZoomableAvatar } from "@/components/image-viewer";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { BellRing, CheckCircle2, MessageCircle, Search, Send } from "lucide-react";
+import { BellRing, CheckCircle2, ListChecks, MessageCircle, Plus, Search, Send, Trash2 } from "lucide-react";
 import { SendDuesReminderDialog } from "@/components/send-dues-reminder-dialog";
+import { ReminderFormDialog } from "@/components/reminder-form-dialog";
 import { Amount, EmptyState, KhataRow, PageTitle, Panel, SectionHeading, StatTile } from "@/components/khata";
-import { getReminderHistory } from "@/app/actions/reminders";
+import { getReminderHistory, listPendingReminders, completeReminder, deleteReminder } from "@/app/actions/reminders";
 import { listOutstandingByTenant } from "@/app/actions/charges";
 import { type Signature } from "@/lib/messages";
 import { chargeOutstanding, CHARGE_TYPE_LABELS } from "@/lib/charges";
@@ -17,29 +18,51 @@ import { inr, fmtDate } from "@/lib/format";
 import type { Serialised } from "@/lib/serialize";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useManager } from "@/lib/manager-context";
+import { toast } from "sonner";
 
 type DueRow = Serialised<Awaited<ReturnType<typeof listOutstandingByTenant>>[number]>;
 type History = Awaited<ReturnType<typeof getReminderHistory>>;
+type PendingReminder = Serialised<Awaited<ReturnType<typeof listPendingReminders>>[number]>;
+type TenantOption = { id: string; name: string };
 
 export function RemindersClient({
   dues,
   history,
   paymentLink,
+  pendingReminders,
+  tenantOptions,
   signature,
 }: {
   dues: DueRow[];
   history: History;
   paymentLink: string;
+  pendingReminders: PendingReminder[];
+  tenantOptions: TenantOption[];
   signature: Signature;
 }) {
   const router = useRouter();
+  const { manager } = useManager();
   const [customFor, setCustomFor] = useState<DueRow | null>(null);
   const [chaseQuery, setChaseQuery] = useState("");
   const [sentQuery, setSentQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [addingReminder, setAddingReminder] = useState(false);
   // The remaining tenants to step through after the current dialog closes,
   // when sending was started from the selection bar rather than one card.
   const [queue, setQueue] = useState<DueRow[]>([]);
+
+  async function markDone(id: string) {
+    await completeReminder(manager, id);
+    toast.success("Reminder done");
+    router.refresh();
+  }
+
+  async function removeReminder(id: string) {
+    await deleteReminder(manager, id);
+    toast.success("Reminder removed");
+    router.refresh();
+  }
 
   const totalToChase = dues.reduce((s, d) => s + d.summary.total.outstanding, 0);
 
@@ -111,6 +134,9 @@ export function RemindersClient({
           <TabsTrigger value="chase" className="flex-1">
             Dues to chase
           </TabsTrigger>
+          <TabsTrigger value="custom" className="flex-1">
+            Custom
+          </TabsTrigger>
           <TabsTrigger value="sent" className="flex-1">
             Sent
           </TabsTrigger>
@@ -151,6 +177,49 @@ export function RemindersClient({
                 ))
               )}
             </>
+          )}
+        </TabsContent>
+
+        <TabsContent value="custom" className="mt-4 space-y-3">
+          <Button size="sm" variant="outline" className="w-full" onClick={() => setAddingReminder(true)}>
+            <Plus className="h-3.5 w-3.5" /> Add a reminder
+          </Button>
+          {pendingReminders.length === 0 ? (
+            <EmptyState icon={ListChecks} chip="purple" title="Nothing set aside">
+              Anything that isn&apos;t a dues charge - renewals, errands, follow-ups - can live here instead.
+            </EmptyState>
+          ) : (
+            <Panel className="py-0">
+              {pendingReminders.map((r) => (
+                <KhataRow
+                  key={r.id}
+                  amount={
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        onClick={() => markDone(r.id)}
+                        className="text-[11px] font-semibold text-primary hover:underline"
+                      >
+                        Done
+                      </button>
+                      <button
+                        onClick={() => removeReminder(r.id)}
+                        className="text-muted-foreground hover:text-destructive"
+                        aria-label="Delete reminder"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  }
+                >
+                  <p className="truncate text-sm font-semibold">{r.title}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {r.tenant ? `${r.tenant.name} · ` : ""}
+                    Due {fmtDate(r.dueDate)}
+                    {r.note ? ` · ${r.note}` : ""}
+                  </p>
+                </KhataRow>
+              ))}
+            </Panel>
           )}
         </TabsContent>
 
@@ -216,6 +285,8 @@ export function RemindersClient({
           paymentLink={paymentLink}
         />
       )}
+
+      <ReminderFormDialog open={addingReminder} onOpenChange={setAddingReminder} tenantOptions={tenantOptions} />
     </div>
   );
 }

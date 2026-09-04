@@ -208,6 +208,10 @@ export async function recordElectricityCharge(
     startDate?: string;
     dueDate: string;
     endPhotoUrl?: string;
+    /** Proof of the starting number, only used when there's no open reading yet to attach one to. */
+    startPhotoUrl?: string;
+    /** Overrides whatever rate this reading would otherwise use, locked into this one bill. */
+    rateOverride?: number;
   }
 ) {
   const accountId = await requireAccountId();
@@ -216,11 +220,13 @@ export async function recordElectricityCharge(
   let bill = await prisma.electricityBill.findFirst({ where: { roomId: input.roomId, accountId, endDate: null } });
 
   if (bill) {
-    if (Number(bill.startReading) !== input.startReading) {
-      bill = await prisma.electricityBill.update({
-        where: { id: bill.id },
-        data: { startReading: input.startReading },
-      });
+    const changes: { startReading?: number; ratePerUnit?: number } = {};
+    if (Number(bill.startReading) !== input.startReading) changes.startReading = input.startReading;
+    if (input.rateOverride !== undefined && Number(bill.ratePerUnit) !== input.rateOverride) {
+      changes.ratePerUnit = input.rateOverride;
+    }
+    if (Object.keys(changes).length > 0) {
+      bill = await prisma.electricityBill.update({ where: { id: bill.id }, data: changes });
     }
   } else {
     const pgInfo = await getPgInfo();
@@ -230,7 +236,8 @@ export async function recordElectricityCharge(
         roomId: input.roomId,
         startReading: input.startReading,
         startDate: new Date(input.startDate ?? input.dueDate),
-        ratePerUnit: pgInfo.electricityRatePerUnit,
+        ratePerUnit: input.rateOverride ?? pgInfo.electricityRatePerUnit,
+        photoUrl: input.startPhotoUrl,
         recordedBy: actor,
       },
     });

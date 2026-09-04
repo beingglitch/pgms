@@ -37,6 +37,16 @@ export async function updatePgInfo(
   revalidatePath("/");
 }
 
+/** Just the default electricity rate, for editing it inline from wherever a reading gets billed. */
+export async function updateDefaultElectricityRate(actor: string, rate: number) {
+  const accountId = await requireAccountId();
+  await prisma.account.update({ where: { id: accountId }, data: { electricityRatePerUnit: rate } });
+  await logActivity(accountId, actor, "Electricity rate updated", `New default ₹${rate}/unit`);
+  revalidatePath("/settings");
+  revalidatePath("/rooms");
+  revalidatePath("/");
+}
+
 export async function updateOwnerName(name: string) {
   const accountId = await requireAccountId();
   const trimmed = name.trim() || "Owner";
